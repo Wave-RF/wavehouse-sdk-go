@@ -14,8 +14,8 @@ import (
 	"testing"
 )
 
-// wireCasesJSON embeds the shared wire-format fixture — the same file the TS
-// runner replays (tests/conformance/conformance_ts.mjs) — so the test binary
+// wireCasesJSON embeds the shared wire-format fixture — the JS SDK
+// (wavehouse-sdk-js) will replay the same cases — so the test binary
 // is self-contained: it works from a module archive or a standalone checkout
 // without depending on paths outside the Go module.
 //
@@ -167,8 +167,7 @@ func TestConformance_WireFormat(t *testing.T) {
 			case "pipes_delete":
 				logErr(t, c.Pipes.Delete(ctx, tc.PipeName))
 			default:
-				// Hard failure, matching the TS runner: skipped cases break
-				// cross-SDK parity.
+				// Hard failure, so a skipped case can't hide cross-SDK drift.
 				t.Fatalf("unhandled endpoint %q — wire it up in the dispatch switch", tc.Endpoint)
 			}
 

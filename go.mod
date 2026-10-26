@@ -1,4 +1,4 @@
-module github.com/Wave-RF/WaveHouse/clients/go
+module github.com/Wave-RF/wavehouse-sdk-go
 
 // Library floor, deliberately lower than the server's pinned toolchain:
 // the newest things this module uses are range-over-int and math/rand/v2

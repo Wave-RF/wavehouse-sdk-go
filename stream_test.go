@@ -227,7 +227,7 @@ func TestStream_FilteredCloseUnderLoad(t *testing.T) {
 	}
 }
 
-// TestStream_EventsBufferBeforeFirstEventsCall pins TS parity: the channel
+// TestStream_EventsBufferBeforeFirstEventsCall pins JS SDK parity: the channel
 // buffers from construction, so events emitted before the first Events() call
 // are still delivered once the consumer starts reading.
 func TestStream_EventsBufferBeforeFirstEventsCall(t *testing.T) {

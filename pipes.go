@@ -99,8 +99,8 @@ func (p *PipeRef) FetchUntyped(ctx context.Context) ([]map[string]any, error) {
 // Stream subscribes to live events using the pipe's name as a table name. The
 // pipe's SQL and params are NOT applied: where a table of that name exists the
 // caller receives its raw events, and otherwise the stream stays silent. Kept
-// for parity with the TypeScript SDK's PipeRef.stream(), which behaves the same
-// way; both wait on a pipe-aware stream endpoint (issue #445).
+// for parity with the JavaScript SDK's PipeRef.stream(), which behaves the same
+// way; both wait on a pipe-aware stream endpoint (Wave-RF/WaveHouse#445).
 func (p *PipeRef) Stream(opts *StreamOptions) *StreamController {
 	return p.createStream(p.name, opts)
 }

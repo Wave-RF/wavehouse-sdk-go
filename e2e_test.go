@@ -39,15 +39,15 @@ func e2eClient(t *testing.T) *Client {
 	// accepts the connection but never responds still yields the graceful skip.
 	probeCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	probe, err := http.NewRequestWithContext(probeCtx, "GET", base+"/v1/health", nil)
+	probe, err := http.NewRequestWithContext(probeCtx, "GET", base+"/v1/health", nil) //nolint:gosec // base is the operator-supplied WAVEHOUSE_URL
 	if err != nil {
 		t.Skipf("e2e: bad WAVEHOUSE_URL %q: %v", base, err)
 	}
-	resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(probe)
+	resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(probe) //nolint:gosec // same operator-supplied URL
 	if err != nil {
 		t.Skipf("e2e: server unreachable at %s: %v", base, err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	return NewClient(cfg)
 }

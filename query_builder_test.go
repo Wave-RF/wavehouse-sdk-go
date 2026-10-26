@@ -297,8 +297,8 @@ func TestQueryBuilder_Pagination_CursorColumnMissingEndsQuietly(t *testing.T) {
 // TestQueryBuilder_PaginationCursorPrecision: the cursor value is read back off
 // the decoded row, so how the row decoded decides how much precision survives.
 // Typed rows keep int64 exactly; the untyped path decodes to float64 and loses
-// everything past 2^53 (the same ceiling the TS SDK's JS numbers have). Use
-// FetchTyped with an int64 field past 2^53 — documented in queries.mdx.
+// everything past 2^53 (the same ceiling the JS SDK's numbers have). Use
+// FetchTyped with an int64 field past 2^53 — documented at wavehouse.dev/sdk/queries.
 func TestQueryBuilder_PaginationCursorPrecision(t *testing.T) {
 	type idRow struct {
 		ID int64 `json:"id"`

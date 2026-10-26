@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	wavehouse "github.com/Wave-RF/WaveHouse/clients/go"
+	wavehouse "github.com/Wave-RF/wavehouse-sdk-go"
 )
 
 // ExampleNewClient demonstrates creating an unauthenticated client and

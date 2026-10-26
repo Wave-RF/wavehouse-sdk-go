@@ -359,7 +359,7 @@ func TestRetryAfterDelay(t *testing.T) {
 }
 
 // A BaseURL carrying a path prefix must survive on both transports — the bug
-// #428 fixed in the TS client, which Go avoids by concatenating rather than
+// Wave-RF/WaveHouse#428 fixed in the JS client, which Go avoids by concatenating rather than
 // resolving. Guards against a future switch to url.JoinPath/ResolveReference.
 func TestBaseURLPathPrefixIsPreserved(t *testing.T) {
 	mux := http.NewServeMux()

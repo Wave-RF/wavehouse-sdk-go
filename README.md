@@ -1,16 +1,16 @@
 # WaveHouse Go SDK
 
-Official Go client for [WaveHouse](https://github.com/Wave-RF/WaveHouse) — a schema-aware real-time API gateway for ClickHouse. Zero third-party runtime dependencies, SSE parser included.
+Official Go client for [WaveHouse](https://github.com/Wave-RF/WaveHouse), a schema-aware real-time API gateway for ClickHouse. It has no third-party runtime dependencies, SSE parser included.
 
-**Full documentation: [wavehouse.dev/sdk/go](https://wavehouse.dev/sdk/setup/go)** (setup); the usage guides below cover both SDKs, tabbed by language.
+**Status: not released yet.** The code was imported from the `go-sdk` branch of the WaveHouse repository and predates several server protocol changes. Bringing it up to date with the current protocol is tracked in this repository's issues, and no version is tagged until that is done.
 
 ## Install
 
 ```bash
-go get github.com/Wave-RF/WaveHouse/clients/go
+go get github.com/Wave-RF/wavehouse-sdk-go
 ```
 
-Requires Go 1.24 or newer.
+The import path is `github.com/Wave-RF/wavehouse-sdk-go` and the package name is `wavehouse`. It requires Go 1.24 or newer.
 
 ## Quick start
 
@@ -22,7 +22,7 @@ import (
     "fmt"
     "log"
 
-    wavehouse "github.com/Wave-RF/WaveHouse/clients/go"
+    wavehouse "github.com/Wave-RF/wavehouse-sdk-go"
 )
 
 func main() {
@@ -47,13 +47,12 @@ func main() {
 
 ## Documentation
 
-- [Go SDK setup](https://wavehouse.dev/sdk/setup/go) — client config, auth, typed rows via generics, error handling.
-- [Queries](https://wavehouse.dev/sdk/queries) — tables, the query builder, inserts, pagination, raw SQL.
-- [Streaming & Live Queries](https://wavehouse.dev/sdk/streaming) — SSE streams, client-side filtering, backfill-then-live.
-- [Pipes](https://wavehouse.dev/sdk/pipes) — execute and manage named query pipes.
-- [Admin & System](https://wavehouse.dev/sdk/admin) — schema, policy, DLQ stats, health.
-- [Reference & CLI](https://wavehouse.dev/sdk/reference) — error codes, the full API tree, and the ClickHouse-to-Go field mapping for row structs.
+The SDK guides are on the WaveHouse docs site at [wavehouse.dev/sdk](https://wavehouse.dev/sdk). They cover the JavaScript SDK today; Go examples join them with this SDK's first release. Until then, the package's doc comments and `example_test.go` are the reference.
+
+## Contributing
+
+`make ci` runs everything CI runs. See [AGENTS.md](AGENTS.md) for the layout and conventions.
 
 ## License
 
-Apache-2.0
+[Apache-2.0](LICENSE)

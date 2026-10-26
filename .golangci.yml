@@ -1,0 +1,67 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - gosec
+    - gocritic
+    - revive
+    - ineffassign
+    - misspell
+    - bodyclose
+    - noctx
+    - errorlint
+    - tparallel
+    - dupword
+    - durationcheck
+    - exhaustive
+    - exptostd
+    - fatcontext
+    - gocheckcompilerdirectives
+    - iface
+    - makezero
+    - nolintlint
+    - unconvert
+    - usetesting
+    - wastedassign
+  settings:
+    revive:
+      # Opt in to specific rules only; skip the default set's noisy
+      # doc-comment and unused-parameter rules.
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: if-return
+        - name: increment-decrement
+        - name: var-naming
+        - name: var-declaration
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unreachable-code
+        - name: redefines-builtin-id
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+
+run:
+  timeout: 5m
+  # The e2e tests sit behind a build tag; without it they are never type-checked or linted.
+  build-tags:
+    - e2e

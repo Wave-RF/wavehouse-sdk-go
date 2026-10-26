@@ -1,0 +1,35 @@
+# Categories for GitHub's generated release notes, the body of every GitHub
+# Release. Kept identical in wavehouse-sdk-js and wavehouse-sdk-go.
+#
+# Matched by PR label, top to bottom, first match wins; `*` collects whatever
+# the categories above it didn't. main is squash-merged, so one PR is one line,
+# titled with its Conventional Commit subject. `breaking-change`, `security`,
+# `bug` and `enhancement` are applied by hand: label the PR, or it lands in
+# "Other changes". Dependabot is split out by author rather than label, so
+# every category before the last excludes it.
+changelog:
+  exclude:
+    labels:
+      - duplicate
+      - invalid
+      - wontfix
+  categories:
+    - title: ⚠️ Breaking changes
+      labels: [breaking-change]
+    # No Dependabot exclude: a bump a maintainer labels `security` is a security fix.
+    - title: 🔒 Security
+      labels: [security]
+    - title: ✨ Features
+      labels: [enhancement]
+      exclude:
+        authors: [dependabot, "dependabot[bot]"]
+    - title: 🐛 Bug fixes
+      labels: [bug]
+      exclude:
+        authors: [dependabot, "dependabot[bot]"]
+    - title: 🧹 Other changes
+      labels: ["*"]
+      exclude:
+        authors: [dependabot, "dependabot[bot]"]
+    - title: 📦 Dependencies
+      labels: ["*"]

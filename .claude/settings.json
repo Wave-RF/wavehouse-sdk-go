@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(rm -rf /:*)",
+      "Bash(rm -rf $HOME:*)",
+      "Bash(rm -rf ~:*)",
+      "Bash(sudo rm:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push --force-with-lease:*)",
+      "Bash(git reset --hard origin:*)",
+      "Bash(git filter-branch:*)",
+      "Bash(git update-ref -d:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(gh repo delete:*)",
+      "Bash(gh release delete:*)",
+      "Bash(gh workflow disable:*)",
+      "Bash(gh secret delete:*)",
+      "Bash(gh pr ready:*)",
+      "Bash(gh pr review --approve:*)",
+      "Bash(gh pr review -a:*)",
+      "Bash(gh pr review --request-changes:*)",
+      "Bash(gh pr review -r:*)"
+    ]
+  }
+}
