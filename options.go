@@ -37,10 +37,15 @@ func WithToken(token string) Option {
 	return func(o *options) { o.token = &token }
 }
 
-// WithTokenSource authenticates with a token fetched by fn, which is called
-// before every HTTP request the client sends, retries included, so it can hand
-// out a refreshed token; cache inside fn. A returned "" sends no Authorization
-// header; a returned error fails the call without sending it.
+// WithTokenSource authenticates with a token fetched by fn. The contract:
+//
+//   - fn runs before every attempt, so a retry and each stream (re)connect
+//     call it again, and a token that changed in between is the one sent.
+//   - fn must be cheap. It sits on the path of every request, so caching,
+//     refreshing and de-duplicating concurrent refreshes are fn's job, not the
+//     SDK's.
+//   - A returned "" sends no Authorization header; a returned error fails the
+//     attempt without sending it.
 func WithTokenSource(fn func(ctx context.Context) (string, error)) Option {
 	return func(o *options) { o.tokenSource, o.sourceSet = fn, true }
 }

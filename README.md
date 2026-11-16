@@ -65,6 +65,8 @@ The same client runs pipes (`wh.Pipe("top_pages").Param("limit", 10).Scan(ctx, &
 
 ## Authentication, headers and timeouts
 
+`WithToken` sends a fixed JWT. For one that expires, `WithTokenSource(fn)` calls `fn` **before every attempt**: each retry, and each stream connect, runs it again, so a refreshed token is the one sent. `fn` must be cheap; caching and refreshing are yours to do.
+
 `RetryPolicy.AttemptTimeout` (off by default) gives each attempt its own deadline, so a stalled one is retried instead of holding the whole call. It covers a REST call, and each stream connect up to the response headers, but not an established stream. Your ctx still ends the call at once. A raw SQL or pipe call is not resent once the request may have reached the server.
 
 ## Streaming
