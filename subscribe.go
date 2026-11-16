@@ -71,6 +71,11 @@ type SubscribeOptions struct {
 	// ResumeID resumes after a checkpoint: a previous [Event.ID], sent as the
 	// Last-Event-ID header. It wins over Since.
 	ResumeID string
+	// Header adds headers to every connection of this subscription, over the
+	// client's [WithHeader] and [WithHeaderFunc] headers and under the SDK's
+	// own, with the precedence of [Query.Header]; Last-Event-ID is the SDK's.
+	// An invalid name or value is an error from Subscribe.
+	Header http.Header
 	// OnState, when set, is called with each change of connection state, in
 	// order, one call at a time, on a goroutine of its own and never under a
 	// lock of the SDK's. The calls up to the first StateLive complete before
@@ -145,6 +150,8 @@ type Subscription struct {
 	// since is where a connection with no event to resume from replays from:
 	// the caller's Since, else the start of the first live connection.
 	since time.Time
+	// header is the caller's SubscribeOptions.Header, copied.
+	header http.Header
 	// notes delivers OnState calls; nil without OnState.
 	notes *notifier
 
@@ -186,11 +193,12 @@ type Subscription struct {
 // frame is retried without limit, waiting per the RetryPolicy's backoff (the
 // count starts over after a connection that delivered an event or stayed up
 // 30s), and resumes with Last-Event-ID set to the last event delivered. The
-// token source is called on every connect, and once a connection has been
-// live, its errors are retried like a transport error. RetryPolicy.AttemptTimeout
-// bounds each connect up to the server's response headers, and never an
-// established connection. A refusal for good, as above, ends the subscription
-// with that error in Err.
+// token source and the header func ([WithTokenSource], [WithHeaderFunc]) are
+// called on every connect, and once a connection has been live, their errors
+// are retried like a transport error. RetryPolicy.AttemptTimeout bounds each
+// connect up to the server's response headers, and never an established
+// connection. A refusal for good, as above, ends the subscription with that
+// error in Err.
 //
 // The server announces the column names in an "event: schema" frame and then
 // sends each row as a positional array; Subscribe zips them into an [Event].
@@ -216,10 +224,14 @@ func (c *Client) Subscribe(ctx context.Context, table string, opts *SubscribeOpt
 	if opts == nil {
 		opts = &SubscribeOptions{}
 	}
+	if err := checkHeaders(opts.Header); err != nil {
+		return nil, fmt.Errorf("wavehouse: Subscribe: SubscribeOptions.Header: %w", err)
+	}
 	sctx, cancel := context.WithCancel(ctx)
 	s := &Subscription{
 		c:      c,
 		table:  table,
+		header: opts.Header.Clone(),
 		since:  opts.Since,
 		ctx:    sctx,
 		cancel: cancel,
@@ -403,8 +415,8 @@ func (s *Subscription) loop(ready chan<- error) (end error) {
 			if s.ctx.Err() != nil {
 				return s.ctxError(err)
 			}
-			// A token source that fails after the stream was live is a blip to ride out, not a refusal.
-			retryable := IsRetryable(err) || (live && errors.Is(err, errTokenSource))
+			// A token source or header func that fails after the stream was live is a blip to ride out, not a refusal.
+			retryable := IsRetryable(err) || (live && (errors.Is(err, errTokenSource) || errors.Is(err, errHeaderFunc)))
 			if !retryable || (ready != nil && failures+1 >= s.c.retry.MaxAttempts) {
 				noteAttempts(err, failures+1)
 				return err
@@ -434,11 +446,12 @@ func (s *Subscription) ctxError(err error) error {
 // 200 with an event stream; any other answer is an error.
 func (s *Subscription) connect() (*http.Response, error) {
 	r := &request{
-		kind:   callRead,
-		method: http.MethodGet,
-		path:   streamPath,
-		query:  url.Values{"table": {s.table}},
-		accept: "text/event-stream",
+		kind:       callRead,
+		method:     http.MethodGet,
+		path:       streamPath,
+		query:      url.Values{"table": {s.table}},
+		accept:     "text/event-stream",
+		callHeader: s.header,
 	}
 	switch {
 	case s.lastID != "":

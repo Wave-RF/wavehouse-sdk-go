@@ -131,6 +131,9 @@ func (q *Query) InsertNDJSON(ctx context.Context, r io.Reader) (*InsertResult, e
 // checkInsert refuses a query that carries read state: the server's ingest
 // ignores it, so the caller's intent would be silently dropped.
 func (q *Query) checkInsert(call string) error {
+	if q.err != nil {
+		return fmt.Errorf("wavehouse: %s on %q: %w", call, q.table, q.err)
+	}
 	if q.hasReadState() {
 		return fmt.Errorf("wavehouse: %s on %q: the query carries read state (select, where, order, group, limit, time range or aggregates), which an insert ignores; call it on a bare From(table)", call, q.table)
 	}
@@ -145,6 +148,7 @@ func (q *Query) ingest(ctx context.Context, body []byte) (*InsertResult, error) 
 	r := &request{
 		kind: callIngest, method: http.MethodPost, path: "/v1/ingest",
 		query: url.Values{"table": {q.table}}, body: body, contentType: "application/x-ndjson",
+		callHeader: q.header,
 	}
 	res, err := q.c.do(ctx, r)
 	if err != nil {

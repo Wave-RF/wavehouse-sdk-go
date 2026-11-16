@@ -17,6 +17,8 @@ type PipeCall struct {
 	c      *Client
 	name   string
 	params map[string]any
+	header http.Header
+	err    error
 }
 
 // Pipe starts a call to the named pipe, sent as POST /v1/pipes/{name} with
@@ -41,7 +43,28 @@ func (p *PipeCall) Params(m map[string]any) *PipeCall {
 	return &cp
 }
 
+// Header sets a header on this call's request, with the precedence and the
+// copy semantics of [Query.Header]. It applies to Scan, Fetch and Exec.
+func (p *PipeCall) Header(key, value string) *PipeCall {
+	cp := *p
+	cp.header = p.header.Clone()
+	if err := checkHeader(key, value); err != nil {
+		if cp.err == nil {
+			cp.err = fmt.Errorf("wavehouse: Pipe %q: Header: %w", p.name, err)
+		}
+		return &cp
+	}
+	if cp.header == nil {
+		cp.header = http.Header{}
+	}
+	cp.header.Set(key, value)
+	return &cp
+}
+
 func (p *PipeCall) request() (*request, error) {
+	if p.err != nil {
+		return nil, p.err
+	}
 	if p.name == "" {
 		return nil, errors.New("wavehouse: Pipe: empty pipe name")
 	}
@@ -56,7 +79,7 @@ func (p *PipeCall) request() (*request, error) {
 	// A pipe may be one that writes, so only a request that never left is retried.
 	return &request{
 		kind: callPipe, method: http.MethodPost, path: "/v1/pipes/" + url.PathEscape(p.name),
-		body: raw, contentType: "application/json",
+		body: raw, contentType: "application/json", callHeader: p.header,
 	}, nil
 }
 

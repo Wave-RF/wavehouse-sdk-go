@@ -58,6 +58,7 @@ type Query struct {
 	orderBy   []orderClause
 	limit     int
 	timeRange *timeRange
+	header    http.Header
 	err       error
 }
 
@@ -104,6 +105,7 @@ func (q *Query) with(f func(*Query)) *Query {
 	cp.filters = slices.Clone(q.filters)
 	cp.groupBy = slices.Clone(q.groupBy)
 	cp.orderBy = slices.Clone(q.orderBy)
+	cp.header = q.header.Clone()
 	f(&cp)
 	return &cp
 }
@@ -120,6 +122,25 @@ func (q *Query) checkNames(call string, names ...string) {
 	if slices.Contains(names, "") {
 		q.fail("%s: empty column name", call)
 	}
+}
+
+// Header sets a header on this query's request, over the client's
+// [WithHeader] and [WithHeaderFunc] headers and under the SDK's own
+// (Authorization, Content-Type, Accept, User-Agent). A later Header for the
+// same key, in any letter case, replaces the earlier one; values are never
+// joined. It applies to Scan, Fetch and Insert, and an invalid name or value
+// is an error from them, before anything is sent. It returns a copy.
+func (q *Query) Header(key, value string) *Query {
+	return q.with(func(q *Query) {
+		if err := checkHeader(key, value); err != nil {
+			q.fail("Header: %v", err)
+			return
+		}
+		if q.header == nil {
+			q.header = http.Header{}
+		}
+		q.header.Set(key, value)
+	})
 }
 
 // Select adds columns to the projection; calls accumulate. With no Select,
@@ -327,6 +348,7 @@ func (q *Query) request() (*request, error) {
 	return &request{
 		kind: callRead, method: http.MethodPost, path: "/v1/query",
 		query: url.Values{"table": {q.table}}, body: raw, contentType: "application/json",
+		callHeader: q.header,
 	}, nil
 }
 

@@ -394,5 +394,41 @@
     "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "last", "args": ["ts", 90000]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
     "expected_body": {"columns": ["page"], "limit": 1000, "time_range": {"column": "ts", "since": "90000ms"}}
+  },
+  {
+    "name": "per-call header on a query",
+    "endpoint": "query", "table": "clicks", "operations": [], "call_headers": {"X-Trace": "t-1"},
+    "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
+    "expected_headers": {"X-Trace": "t-1"}, "expected_body": {"select_all": true}
+  },
+  {
+    "name": "per-call header replaces a client header case-insensitively",
+    "endpoint": "query", "table": "clicks", "operations": [], "headers": {"X-Tenant-ID": "acme"}, "call_headers": {"x-tenant-id": "globex"},
+    "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_headers": {"X-Tenant-ID": "globex"},
+    "expected_body": {"select_all": true}
+  },
+  {
+    "name": "per-call header cannot replace the SDK's own Content-Type or Accept",
+    "endpoint": "query", "table": "clicks", "operations": [], "call_headers": {"Content-Type": "text/nope", "Accept": "text/nope", "X-Trace": "t-1"},
+    "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
+    "expected_headers": {"Accept": "application/json", "X-Trace": "t-1"}, "expected_body": {"select_all": true}
+  },
+  {
+    "name": "per-call header on ingest",
+    "endpoint": "ingest", "table": "clicks", "operations": [{"method": "insert", "args": [{"page": "/a"}]}], "call_headers": {"X-Trace": "t-1"},
+    "expected_path": "/v1/ingest?table=clicks", "expected_method": "POST",
+    "expected_headers": {"X-Trace": "t-1"}, "expected_ndjson": [{"page": "/a"}]
+  },
+  {
+    "name": "per-call header on a pipe",
+    "endpoint": "pipe", "pipe_name": "simple", "pipe_params": null, "call_headers": {"X-Trace": "t-1"},
+    "expected_path": "/v1/pipes/simple", "expected_method": "POST", "expected_headers": {"X-Trace": "t-1"},
+    "expected_body": {}
+  },
+  {
+    "name": "per-call header on raw SQL",
+    "endpoint": "sql", "sql": "SELECT 1", "call_headers": {"X-Trace": "t-1"},
+    "expected_path": "/v1/ops/query", "expected_method": "POST", "expected_headers": {"X-Trace": "t-1"},
+    "expected_body": {"sql": "SELECT 1"}
   }
 ]

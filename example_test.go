@@ -202,6 +202,43 @@ func ExampleWithHeader() {
 	}
 }
 
+// ExampleWithHeaderFunc rotates a credential header. fn runs before every
+// attempt, retries and stream connects included, so it must be cheap: the
+// vault client caches the secret and refreshes it itself.
+func ExampleWithHeaderFunc() {
+	// secret stands in for a vault client that caches what it fetched.
+	secret := func(context.Context) (string, error) { return os.Getenv("ACCESS_SECRET"), nil }
+
+	wh, err := wavehouse.New("https://wavehouse.example.com", wavehouse.WithHeaderFunc(
+		func(ctx context.Context) (http.Header, error) {
+			s, err := secret(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return http.Header{"X-Access-Secret": {s}}, nil
+		}))
+	if err != nil {
+		log.Fatal(err)
+	}
+	_ = wh
+}
+
+// ExampleQuery_Header sends a header on one call only, over the client's own
+// headers of the same name. It also works on a pipe call, a SQL call and
+// SubscribeOptions.Header.
+func ExampleQuery_Header() {
+	wh, err := wavehouse.New("http://localhost:8080", wavehouse.WithHeader("X-Tenant-ID", "acme"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	rows, err := wh.From("clicks").Header("X-Tenant-ID", "globex").Header("X-Trace-Id", "abc123").
+		Limit(10).Fetch(context.Background())
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(len(rows))
+}
+
 // ExampleRetryPolicy bounds each attempt, so a stalled one is retried instead
 // of holding the call: the first attempt gets 5s, and the call's ctx still caps
 // the whole of it.

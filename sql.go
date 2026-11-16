@@ -15,6 +15,8 @@ type SQLCall struct {
 	c      *Client
 	query  string
 	tenant string
+	header http.Header
+	err    error
 }
 
 // ForTenant runs the statement against the ClickHouse of the tenant id, sent
@@ -28,6 +30,24 @@ func (s *SQLCall) ForTenant(id string) *SQLCall {
 	return &n
 }
 
+// Header sets a header on this statement's request, with the precedence and
+// the copy semantics of [Query.Header]. It applies to Scan, Fetch and Exec.
+func (s *SQLCall) Header(key, value string) *SQLCall {
+	n := *s
+	n.header = s.header.Clone()
+	if err := checkHeader(key, value); err != nil {
+		if n.err == nil {
+			n.err = fmt.Errorf("wavehouse: SQL: Header: %w", err)
+		}
+		return &n
+	}
+	if n.header == nil {
+		n.header = http.Header{}
+	}
+	n.header.Set(key, value)
+	return &n
+}
+
 // SQL prepares a statement to run verbatim against ClickHouse, via
 // POST /v1/ops/query. It needs the admin role or the operator key, and the
 // statement can be anything ClickHouse accepts, DDL and mutations included.
@@ -38,6 +58,9 @@ func (c *Client) SQL(query string) *SQLCall {
 }
 
 func (s *SQLCall) request() (*request, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
 	if strings.TrimSpace(s.query) == "" {
 		return nil, errors.New("wavehouse: SQL: empty statement")
 	}
@@ -49,6 +72,7 @@ func (s *SQLCall) request() (*request, error) {
 	return &request{
 		kind: callSQL, method: http.MethodPost, path: "/v1/ops/query",
 		body: raw, contentType: "application/json", query: tenantQuery([]AdminOption{ForTenant(s.tenant)}),
+		callHeader: s.header,
 	}, nil
 }
 

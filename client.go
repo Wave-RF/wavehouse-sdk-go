@@ -41,6 +41,7 @@ type Client struct {
 	tokenSource func(context.Context) (string, error)
 	operatorKey string
 	headers     http.Header
+	headerFunc  func(context.Context) (http.Header, error)
 	retry       RetryPolicy
 	userAgent   string
 }
@@ -92,6 +93,7 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 		noRedirect:  &noRedirect,
 		tokenSource: o.tokenSource,
 		headers:     o.headers,
+		headerFunc:  o.headerFunc,
 		retry:       o.retry,
 		userAgent:   ua,
 	}

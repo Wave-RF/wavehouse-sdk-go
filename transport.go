@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -51,7 +52,11 @@ type request struct {
 	body        []byte // nil sends no body
 	contentType string // required with a body
 	accept      string // "" means application/json
-	// header is sent over WithHeader's headers and under the SDK's own.
+	// callHeader is the caller's per-call headers: sent over WithHeader and
+	// WithHeaderFunc, under Authorization and the SDK's own.
+	callHeader http.Header
+	// header is the SDK's own protocol header (Last-Event-ID), sent over the
+	// caller's but under Authorization.
 	header http.Header
 }
 
@@ -139,8 +144,8 @@ func (c *Client) attempt(ctx context.Context, r *request) (*response, error) {
 // caller closes the body.
 //
 // The request itself runs under actx, a child of the caller's ctx that may
-// carry the attempt's deadline. The token source runs under ctx: it is meant
-// to be cheap, and the deadline bounds the HTTP exchange.
+// carry the attempt's deadline. The token source and the header func run under
+// ctx: they are meant to be cheap, and the deadline bounds the HTTP exchange.
 func (c *Client) send(ctx, actx context.Context, r *request) (*http.Response, error) {
 	var body io.Reader
 	if r.body != nil {
@@ -151,13 +156,25 @@ func (c *Client) send(ctx, actx context.Context, r *request) (*http.Response, er
 		return nil, fmt.Errorf("wavehouse: %s %s: %w", r.method, r.path, err)
 	}
 
-	// Custom headers first, so the SDK's own below win.
+	// Lowest to highest: WithHeader, WithHeaderFunc, the call's own headers;
+	// then the SDK's own below win. A later layer replaces a key, never joins.
+	custom := len(c.headers) > 0 || len(r.callHeader) > 0
 	for k, v := range c.headers {
 		req.Header[k] = slices.Clone(v)
 	}
-	for k, v := range r.header {
-		req.Header[k] = slices.Clone(v)
+	if c.headerFunc != nil {
+		h, err := c.headerFunc(ctx)
+		if err == nil {
+			err = checkHeaders(h)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("wavehouse: %s %s: %w: %w", r.method, r.path, errHeaderFunc, err)
+		}
+		custom = custom || len(h) > 0
+		setHeaders(req.Header, h)
 	}
+	setHeaders(req.Header, r.callHeader)
+	setHeaders(req.Header, r.header)
 	req.Header.Set("User-Agent", c.userAgent)
 	accept := r.accept
 	if accept == "" {
@@ -178,7 +195,7 @@ func (c *Client) send(ctx, actx context.Context, r *request) (*http.Response, er
 		req.Header.Set("Authorization", auth)
 	}
 
-	credentialed := auth != "" || len(c.headers) > 0
+	credentialed := auth != "" || custom
 	hc := c.hc
 	if credentialed {
 		hc = c.noRedirect
@@ -195,9 +212,40 @@ func (c *Client) send(ctx, actx context.Context, r *request) (*http.Response, er
 	return res, nil
 }
 
-// errTokenSource marks a failure of the WithTokenSource function, which a
-// stream retries once it has been live.
-var errTokenSource = errors.New("token source")
+// errTokenSource and errHeaderFunc mark a failure of the WithTokenSource or
+// WithHeaderFunc function, which a stream retries once it has been live.
+var (
+	errTokenSource = errors.New("token source")
+	errHeaderFunc  = errors.New("header func")
+)
+
+// setHeaders replaces each key of h in dst, canonicalising the key so
+// "x-a" and "X-A" are one header.
+func setHeaders(dst, h http.Header) {
+	for k, v := range h {
+		dst[http.CanonicalHeaderKey(k)] = slices.Clone(v)
+	}
+}
+
+// checkHeaders reports a name or value that can't be sent.
+func checkHeaders(h http.Header) error {
+	for k, vs := range h {
+		for _, v := range vs {
+			if err := checkHeader(k, v); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkHeader reports a header name or value that can't be sent.
+func checkHeader(key, value string) error {
+	if !validHeaderName(key) || strings.ContainsAny(value, "\r\n\x00") {
+		return fmt.Errorf("invalid header name or value for %q", key)
+	}
+	return nil
+}
 
 func (c *Client) url(r *request) string {
 	u := c.baseURL + r.path

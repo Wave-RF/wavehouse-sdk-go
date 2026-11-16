@@ -24,6 +24,8 @@ type options struct {
 	httpClient  *http.Client
 	clientSet   bool
 	headers     http.Header
+	headerFunc  func(context.Context) (http.Header, error)
+	funcSet     bool
 	retry       RetryPolicy
 	userAgent   string
 	errs        []error
@@ -68,10 +70,11 @@ func WithHTTPClient(hc *http.Client) Option {
 }
 
 // WithHeader adds a header to every request, REST calls and the stream
-// connection alike. The headers the SDK sets itself (Authorization,
-// Content-Type, Accept and User-Agent) win: a value given here for one of them
-// is replaced, or dropped where the SDK sends none. Every other header is sent
-// unchanged. A later WithHeader for the same key replaces the earlier one. Any
+// connection alike. It is the lowest layer: [WithHeaderFunc] and a per-call
+// header replace it, key by key, case-insensitively. The headers the SDK sets
+// itself (Authorization, Content-Type, Accept and User-Agent) win: a value
+// given here for one of them is replaced, or dropped where the SDK sends none.
+// Every other header is sent unchanged. A later WithHeader for the same key replaces the earlier one. Any
 // custom header counts as a credential when deciding whether a redirect may be
 // followed.
 //
@@ -80,7 +83,7 @@ func WithHTTPClient(hc *http.Client) Option {
 // [ForTenant] to an admin call to address a tenant there.
 func WithHeader(key, value string) Option {
 	return func(o *options) {
-		if !validHeaderName(key) || strings.ContainsAny(value, "\r\n\x00") {
+		if checkHeader(key, value) != nil {
 			o.errs = append(o.errs, fmt.Errorf("WithHeader(%q): invalid header name or value", key))
 			return
 		}
@@ -89,6 +92,23 @@ func WithHeader(key, value string) Option {
 		}
 		o.headers.Set(key, value)
 	}
+}
+
+// WithHeaderFunc adds headers computed by fn, for credentials that rotate. It
+// follows the same contract as [WithTokenSource]: fn runs before every
+// attempt, retries and each stream (re)connect included, must be cheap, and
+// does its own caching. An error from fn fails the attempt without sending
+// it, like a token source error: [Client.Subscribe] returns it from the first
+// connect and retries it once the stream has been live.
+//
+// A header from fn replaces the same header from [WithHeader], and a per-call
+// header ([Query.Header], [PipeCall.Header], [SQLCall.Header],
+// SubscribeOptions.Header) replaces fn's. The SDK's own headers still win;
+// see [WithHeader]. Like WithHeader, any header from fn counts as a
+// credential when deciding whether a redirect may be followed. A later
+// WithHeaderFunc replaces an earlier one.
+func WithHeaderFunc(fn func(ctx context.Context) (http.Header, error)) Option {
+	return func(o *options) { o.headerFunc, o.funcSet = fn, true }
 }
 
 // WithRetry replaces the retry policy. Zero fields keep their defaults; a
@@ -181,6 +201,9 @@ func (o *options) validate() error {
 	}
 	if credentials > 1 {
 		errs = append(errs, errors.New("WithToken, WithTokenSource and WithOperatorKey are mutually exclusive"))
+	}
+	if o.funcSet && o.headerFunc == nil {
+		errs = append(errs, errors.New("WithHeaderFunc: nil function"))
 	}
 	if o.clientSet && o.httpClient == nil {
 		errs = append(errs, errors.New("WithHTTPClient: nil client"))

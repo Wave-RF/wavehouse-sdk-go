@@ -27,7 +27,8 @@ type wireCase struct {
 	SDKs       []string          `json:"sdks"` // which SDKs replay the case; empty means all
 	Endpoint   string            `json:"endpoint"`
 	Table      string            `json:"table"`
-	Headers    map[string]string `json:"headers"` // request headers set through WithHeader
+	Headers    map[string]string `json:"headers"`      // request headers set through WithHeader
+	CallHeader map[string]string `json:"call_headers"` // the call's own headers, through Header
 	Operations []wireOp          `json:"operations"`
 	PipeName   string            `json:"pipe_name"`
 	PipeParams map[string]any    `json:"pipe_params"`
@@ -125,20 +126,40 @@ func runWireCase(t *testing.T, c *Client, tc wireCase) error {
 	ft := ForTenant(tc.Tenant)
 	switch tc.Endpoint {
 	case "query":
-		_, err := applyOps(t, c.From(tc.Table), tc.Operations).Fetch(ctx)
+		q := applyOps(t, c.From(tc.Table), tc.Operations)
+		for k, v := range tc.CallHeader {
+			q = q.Header(k, v)
+		}
+		_, err := q.Fetch(ctx)
 		return err
 	case "ingest":
 		require.Len(t, tc.Operations, 1)
-		_, err := c.From(tc.Table).Insert(ctx, tc.Operations[0].Args[0])
+		q := c.From(tc.Table)
+		for k, v := range tc.CallHeader {
+			q = q.Header(k, v)
+		}
+		_, err := q.Insert(ctx, tc.Operations[0].Args[0])
 		return err
 	case "pipe":
-		_, err := c.Pipe(tc.PipeName).Params(tc.PipeParams).Fetch(ctx)
+		p := c.Pipe(tc.PipeName).Params(tc.PipeParams)
+		for k, v := range tc.CallHeader {
+			p = p.Header(k, v)
+		}
+		_, err := p.Fetch(ctx)
 		return err
 	case "sql":
-		_, err := c.SQL(tc.SQL).ForTenant(tc.Tenant).Fetch(ctx)
+		s := c.SQL(tc.SQL).ForTenant(tc.Tenant)
+		for k, v := range tc.CallHeader {
+			s = s.Header(k, v)
+		}
+		_, err := s.Fetch(ctx)
 		return err
 	case "sql_exec":
-		return c.SQL(tc.SQL).ForTenant(tc.Tenant).Exec(ctx)
+		s := c.SQL(tc.SQL).ForTenant(tc.Tenant)
+		for k, v := range tc.CallHeader {
+			s = s.Header(k, v)
+		}
+		return s.Exec(ctx)
 	case "health":
 		return c.Health(ctx)
 	case "version":
