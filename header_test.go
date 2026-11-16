@@ -226,3 +226,49 @@ func TestSubscribeHeaderFuncRetriedAfterLive(t *testing.T) {
 		assert.Equal(t, int32(4), calls.Load())
 	})
 }
+
+// Names must be tokens and values must pass net/http's field-value rule: every
+// header source rejects the same bytes, before anything is sent, with an
+// error that is not retryable.
+func TestHeaderValidationMatchesTheWire(t *testing.T) {
+	badValues := []string{"a\x01b", "a\x7fb", "a\vb", "a\fb", "a\rb", "a\nb", "a\x00b"}
+	goodValues := []string{"a\tb", "café", "a b", ""}
+	badNames := []string{"", "X A", "X:A", "X\x01", "café", "X(A)"}
+	for _, v := range badValues {
+		assert.Error(t, checkHeader("X-A", v), "%q", v)
+	}
+	for _, v := range goodValues {
+		assert.NoError(t, checkHeader("X-A", v), "%q", v)
+	}
+	for _, n := range badNames {
+		assert.Error(t, checkHeader(n, "v"), "%q", n)
+	}
+
+	rec := newRecorder(t, wireAnswer)
+	for _, v := range []string{"a\x01b", "a\x7fb", "a\vb"} {
+		t.Run(fmt.Sprintf("%q", v), func(t *testing.T) {
+			_, err := New(rec.URL, WithHeader("X-A", v))
+			require.Error(t, err)
+			_, err = New(rec.URL, WithUserAgent(v))
+			require.Error(t, err)
+
+			c := rec.client(t, WithHeaderFunc(func(context.Context) (http.Header, error) {
+				return http.Header{"X-A": {v}}, nil
+			}))
+			err = c.Health(t.Context())
+			require.ErrorContains(t, err, "header func")
+			assert.False(t, IsRetryable(err))
+
+			c = rec.client(t)
+			_, err = c.From("t").Header("X-A", v).Fetch(t.Context())
+			require.Error(t, err)
+			assert.False(t, IsRetryable(err))
+			require.Error(t, c.Pipe("p").Header("X-A", v).Exec(t.Context()))
+			require.Error(t, c.SQL("SELECT 1").Header("X-A", v).Exec(t.Context()))
+			_, err = c.Subscribe(t.Context(), "t", &SubscribeOptions{Header: http.Header{"X-A": {v}}})
+			require.Error(t, err)
+			assert.False(t, IsRetryable(err))
+		})
+	}
+	assert.Empty(t, rec.requests(), "sent despite an invalid header")
+}

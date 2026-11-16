@@ -208,7 +208,7 @@ func (o *options) validate() error {
 	if o.clientSet && o.httpClient == nil {
 		errs = append(errs, errors.New("WithHTTPClient: nil client"))
 	}
-	if strings.ContainsAny(o.userAgent, "\r\n\x00") {
+	if !validHeaderValue(o.userAgent) {
 		errs = append(errs, errors.New("WithUserAgent: invalid characters"))
 	}
 	var err error

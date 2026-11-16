@@ -15,7 +15,6 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -248,10 +247,21 @@ func checkHeaders(h http.Header) error {
 
 // checkHeader reports a header name or value that can't be sent.
 func checkHeader(key, value string) error {
-	if !validHeaderName(key) || strings.ContainsAny(value, "\r\n\x00") {
+	if !validHeaderName(key) || !validHeaderValue(value) {
 		return fmt.Errorf("invalid header name or value for %q", key)
 	}
 	return nil
+}
+
+// validHeaderValue is the RFC 9110 field-value rule net/http applies on the
+// wire: no control byte but HTAB, and no DEL. Bytes from 0x80 (obs-text) pass.
+func validHeaderValue(v string) bool {
+	for i := range len(v) {
+		if b := v[i]; (b < ' ' && b != '\t') || b == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Client) url(r *request) string {
