@@ -5,7 +5,7 @@ The Go client for [WaveHouse](https://github.com/Wave-RF/WaveHouse). Module `git
 ## Layout
 
 - The package is flat at the repo root: `client.go` (`New`, `Client`), `options.go` (the `With…` options and `RetryPolicy`), `transport.go` (requests, retries, redirects, decoding), `errors.go` (`APIError`, sentinels), `admin.go` (health, version and the `/v1/ops/*` reads), `insert.go` (`Client.From`, `Query.Insert`, `InsertNDJSON`), `query.go` (the immutable `Query` builder, `Scan` and `Fetch`), `row.go` (`Row` and its typed accessors), `pipe.go` (`Client.Pipe`), `sql.go` (`Client.SQL`), `subscribe.go` (`Subscribe`: the stream's reconnect loop and row decoding) and `sse.go` (the event-stream parser).
-- `testdata/wire_cases.json` holds the request conformance cases. The JS SDK is meant to replay the same cases.
+- `testdata/wire_cases.json` holds the request conformance cases. The JS SDK replays the same file; a case with an `"sdks"` list is for those SDKs only.
 - `e2e/` holds the live tests, as a module of their own so their dependencies stay out of the SDK's `go.mod`. They start ClickHouse and the server's `ghcr.io/wave-rf/wavehouse:dev` image with testcontainers; `e2e/testdata/settings/` is that server's settings directory.
 - `scripts/` and `.github/` hold the files kept in step with `wavehouse-sdk-js` (see *Files kept in step*) plus this repo's `ci.yml`, `release.yml` and `scripts/ci/release.sh`.
 
@@ -23,7 +23,7 @@ The Go client for [WaveHouse](https://github.com/Wave-RF/WaveHouse). Module `git
 ## Tests today
 
 - **Unit:** `*_test.go` against `httptest` servers, with testify; `testing/synctest` for anything timed (backoff, Retry-After), so no test sleeps.
-- **Request conformance:** `testdata/wire_cases.json` holds the cases; `conformance_test.go` replays them against every call that sends a request, tenant routing included, and the JS SDK is meant to replay the same file.
+- **Request conformance:** `testdata/wire_cases.json` holds the cases; `conformance_test.go` replays them against every call that sends a request, tenant routing included (skipping cases whose `"sdks"` list leaves Go out); the JS SDK replays the same file.
 - **Live:** `e2e/`, against a real server started with testcontainers; run in CI by the `Live tests` job.
 - **Server end-to-end:** none yet.
 
@@ -76,7 +76,7 @@ A test that hand-writes a server response can't catch a decoding bug against the
 
 ### Files kept in step
 
-These files are identical in both SDK repositories: `.claude/settings.json`, `.editorconfig`, `.github/copilot-instructions.md`, `.github/release.yml`, `.github/workflows/shared-checks.yml`, `CLAUDE.md`, `LICENSE`, `scripts/lint-pr-title.sh`, `scripts/ci/check-pr-title.sh`, `scripts/ci/release-channel.sh` and `scripts/ci/require-needs.sh`. Nothing syncs them, so a change to one goes into both repositories. Branch and tag protection come from organization rulesets that match every `wavehouse-sdk-*` repository.
+These files are identical in both SDK repositories: `.claude/settings.json`, `.editorconfig`, `.github/copilot-instructions.md`, `.github/release.yml`, `.github/workflows/shared-checks.yml`, `CLAUDE.md`, `LICENSE`, `scripts/lint-pr-title.sh`, `scripts/ci/check-pr-title.sh`, `scripts/ci/release-channel.sh`, `scripts/ci/require-needs.sh` and `testdata/wire_cases.json`. In that file an optional `"sdks"` list (`["go"]` or `["js"]`) limits a case to the SDKs that have the feature, and each SDK replays only its own. Nothing syncs them, so a change to one goes into both repositories. Branch and tag protection come from organization rulesets that match every `wavehouse-sdk-*` repository.
 
 ### This repository is public
 

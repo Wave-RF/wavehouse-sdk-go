@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +24,7 @@ var wireCasesJSON []byte
 // wireCase is one SDK call and the exact request it must send.
 type wireCase struct {
 	Name       string         `json:"name"`
+	SDKs       []string       `json:"sdks"` // which SDKs replay the case; empty means all
 	Endpoint   string         `json:"endpoint"`
 	Table      string         `json:"table"`
 	Tenant     string         `json:"tenant"`
@@ -75,6 +77,9 @@ func TestConformanceWireFormat(t *testing.T) {
 	require.NotEmpty(t, cases)
 
 	for _, tc := range cases {
+		if len(tc.SDKs) > 0 && !slices.Contains(tc.SDKs, "go") {
+			continue
+		}
 		t.Run(tc.Name, func(t *testing.T) {
 			rec := newRecorder(t, wireAnswer)
 			c := rec.client(t)

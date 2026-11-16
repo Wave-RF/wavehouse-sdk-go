@@ -139,6 +139,7 @@
   },
   {
     "name": "groupBy joins its columns to the selection",
+    "sdks": ["go"],
     "endpoint": "query", "table": "clicks", "operations": [{"method": "count", "args": ["*", ""]}, {"method": "groupBy", "args": ["page", "button"]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
     "expected_body": {"columns": ["page", "button"], "group_by": ["page", "button"], "aggregations": [{"fn": "count", "column": "*", "alias": "count"}]}
@@ -151,12 +152,14 @@
   },
   {
     "name": "aggregate with no alias sends none",
+    "sdks": ["go"],
     "endpoint": "query", "table": "clicks", "operations": [{"method": "aggregate", "args": ["uniqExact", "user_id", ""]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
     "expected_body": {"aggregations": [{"fn": "uniqExact", "column": "user_id"}]}
   },
   {
     "name": "orderBy direction is lowercased",
+    "sdks": ["go"],
     "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "orderBy", "args": ["page", "DESC"]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
     "expected_body": {"columns": ["page"], "order_by": [{"column": "page", "dir": "desc"}]}
@@ -193,21 +196,23 @@
   },
   {
     "name": "timeRange with since and until, nanoseconds, in UTC",
+    "sdks": ["go"],
     "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "timeRange", "args": ["ts", "2026-01-01T07:00:00.123456789-05:00", "2026-02-01T00:00:00Z"]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
     "expected_body": {"columns": ["page"], "time_range": {"column": "ts", "since": "2026-01-01T12:00:00.123456789Z", "until": "2026-02-01T00:00:00Z"}}
   },
   {
     "name": "last sends the server's relative duration",
+    "sdks": ["go"],
     "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "last", "args": ["ts", "1h30m"]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
     "expected_body": {"columns": ["page"], "time_range": {"column": "ts", "since": "1h30m0s"}}
   },
   {
     "name": "complex query combining everything",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "where", "args": ["score", ">", 10]}, {"method": "count", "args": ["*", "total"]}, {"method": "groupBy", "args": ["page"]}, {"method": "orderBy", "args": ["total", "desc"]}, {"method": "limit", "args": [50]}, {"method": "last", "args": ["received_timestamp", "1h"]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "where", "args": ["score", ">", 10]}, {"method": "count", "args": ["*", "total"]}, {"method": "groupBy", "args": ["page"]}, {"method": "orderBy", "args": ["total", "desc"]}, {"method": "limit", "args": [50]}, {"method": "timeRange", "args": ["received_timestamp", "2026-01-01T00:00:00Z", ""]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"columns": ["page"], "filters": [{"column": "score", "op": "gt", "value": 10}], "aggregations": [{"fn": "count", "column": "*", "alias": "total"}], "group_by": ["page"], "order_by": [{"column": "total", "dir": "desc"}], "limit": 50, "time_range": {"column": "received_timestamp", "since": "1h0m0s"}}
+    "expected_body": {"columns": ["page"], "filters": [{"column": "score", "op": "gt", "value": 10}], "aggregations": [{"fn": "count", "column": "*", "alias": "total"}], "group_by": ["page"], "order_by": [{"column": "total", "dir": "desc"}], "limit": 50, "time_range": {"column": "received_timestamp", "since": "2026-01-01T00:00:00Z"}}
   },
   {
     "name": "table with special characters URL-encodes correctly",
@@ -217,6 +222,7 @@
   },
   {
     "name": "insert single row is one NDJSON line",
+    "sdks": ["go"],
     "endpoint": "ingest", "table": "clicks", "operations": [{"method": "insert", "args": [{"page": "/home", "button": "cta"}]}],
     "expected_path": "/v1/ingest?table=clicks", "expected_method": "POST", "expected_content_type": "application/x-ndjson",
     "expected_ndjson": [{"page": "/home", "button": "cta"}]
@@ -275,6 +281,7 @@
   },
   {
     "name": "version",
+    "sdks": ["go"],
     "endpoint": "version",
     "expected_path": "/version", "expected_method": "GET"
   },
@@ -315,24 +322,28 @@
   },
   {
     "name": "tenant on query is a header",
+    "sdks": ["go"],
     "endpoint": "query", "table": "clicks", "tenant": "acme", "operations": [],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_headers": {"X-Tenant-ID": "acme"},
     "expected_body": {"select_all": true}
   },
   {
     "name": "tenant on ingest is a header",
+    "sdks": ["go"],
     "endpoint": "ingest", "table": "clicks", "tenant": "acme", "operations": [{"method": "insert", "args": [{"page": "/a"}]}],
     "expected_path": "/v1/ingest?table=clicks", "expected_method": "POST", "expected_headers": {"X-Tenant-ID": "acme"},
     "expected_ndjson": [{"page": "/a"}]
   },
   {
     "name": "tenant on pipe is a header",
+    "sdks": ["go"],
     "endpoint": "pipe", "tenant": "acme", "pipe_name": "simple", "pipe_params": null,
     "expected_path": "/v1/pipes/simple", "expected_method": "POST", "expected_headers": {"X-Tenant-ID": "acme"},
     "expected_body": {}
   },
   {
     "name": "tenant on health is a header",
+    "sdks": ["go"],
     "endpoint": "health", "tenant": "acme",
     "expected_path": "/v1/health", "expected_method": "GET", "expected_headers": {"X-Tenant-ID": "acme"}
   },
@@ -351,5 +362,39 @@
     "endpoint": "sql", "tenant": "acme", "sql": "SELECT 1",
     "expected_path": "/v1/ops/query?tenant=acme", "expected_method": "POST", "expected_headers": {"X-Tenant-ID": ""},
     "expected_body": {"sql": "SELECT 1"}
+  },
+  {
+    "name": "js: bare query sends the default limit",
+    "sdks": ["js"],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}],
+    "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
+    "expected_body": {"columns": ["page"], "limit": 1000}
+  },
+  {
+    "name": "js: insert single row is one JSON object",
+    "sdks": ["js"],
+    "endpoint": "ingest", "table": "clicks", "operations": [{"method": "insert", "args": [{"page": "/home", "button": "cta"}]}],
+    "expected_path": "/v1/ingest?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
+    "expected_body": {"page": "/home", "button": "cta"}
+  },
+  {
+    "name": "js: timeRange strings are sent as given",
+    "sdks": ["js"],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "timeRange", "args": ["ts", "2026-01-01T07:00:00.123456789-05:00", "2026-02-01T00:00:00Z"]}],
+    "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
+    "expected_body": {"columns": ["page"], "limit": 1000, "time_range": {"column": "ts", "since": "2026-01-01T07:00:00.123456789-05:00", "until": "2026-02-01T00:00:00Z"}}
+  },
+  {
+    "name": "js: groupBy does not add its columns to the selection",
+    "sdks": ["js"],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "count", "args": ["*", ""]}, {"method": "groupBy", "args": ["page", "button"]}],
+    "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
+    "expected_body": {"group_by": ["page", "button"], "limit": 1000, "aggregations": [{"fn": "count", "column": "*", "alias": "count"}]}
+  },
+  {
+    "name": "js: tenant on health sends no tenant",
+    "sdks": ["js"],
+    "endpoint": "health",
+    "expected_path": "/v1/health", "expected_method": "GET", "expected_headers": {"X-Tenant-ID": ""}
   }
 ]
