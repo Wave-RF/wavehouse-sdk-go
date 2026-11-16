@@ -166,8 +166,8 @@ func TestQuery(t *testing.T) {
 		assert.InDelta(t, 5, out[0].Top, 0)
 	})
 
-	t.Run("group by returns the key without selecting it", func(t *testing.T) {
-		rows, err := events().Count("*", "").GroupBy("name").Fetch(t.Context())
+	t.Run("group by returns the selected key", func(t *testing.T) {
+		rows, err := events().Select("name").Count("*", "").GroupBy("name").Fetch(t.Context())
 		require.NoError(t, err)
 		require.Len(t, rows, 1)
 		assert.Equal(t, name, rows[0]["name"])

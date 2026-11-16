@@ -52,18 +52,17 @@ func TestQueryProjection(t *testing.T) {
 		"star is a column name": {
 			func(c *Client) *Query { return c.From("t").Select("*") }, map[string]any{"columns": []any{"*"}},
 		},
-		"group by key joins the columns": {
+		"group by adds nothing to the selection": {
 			func(c *Client) *Query { return c.From("t").Count("*", "n").GroupBy("g") },
 			map[string]any{
-				"columns":      []any{"g"},
 				"group_by":     []any{"g"},
 				"aggregations": []any{map[string]any{"fn": "count", "column": "*", "alias": "n"}},
 			},
 		},
-		"group by key already selected": {
+		"group by with columns selected": {
 			func(c *Client) *Query { return c.From("t").Select("a", "g").Count("*", "n").GroupBy("g", "h") },
 			map[string]any{
-				"columns":      []any{"a", "g", "h"},
+				"columns":      []any{"a", "g"},
 				"group_by":     []any{"g", "h"},
 				"aggregations": []any{map[string]any{"fn": "count", "column": "*", "alias": "n"}},
 			},
@@ -122,7 +121,7 @@ func TestQueryAggregates(t *testing.T) {
 		agg("sum", "a", "total"), agg("uniqExact", "u", ""), agg("sum", "*", ""),
 	}, body["aggregations"])
 	assert.Equal(t, []any{"g", "h"}, body["group_by"])
-	assert.Equal(t, []any{"g", "h"}, body["columns"], "the keys are selected")
+	assert.NotContains(t, body, "columns", "GroupBy does not select its keys")
 }
 
 func TestQueryTimeRangeLimitFilters(t *testing.T) {

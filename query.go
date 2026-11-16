@@ -175,9 +175,11 @@ func (q *Query) OrderBy(column string, dir Dir) *Query {
 	})
 }
 
-// GroupBy adds GROUP BY columns; calls accumulate. The columns are selected
-// too, unless a Select already names them, because the server returns a group
-// key only when it is selected.
+// GroupBy adds GROUP BY columns; calls accumulate. It sends group_by and
+// nothing else: the server returns only the selected columns and aggregates,
+// so a caller who wants the key back selects it too, as in
+// Select("page").GroupBy("page"). How the server should treat grouping keys
+// is tracked in https://github.com/Wave-RF/WaveHouse/issues/295.
 func (q *Query) GroupBy(columns ...string) *Query {
 	return q.with(func(q *Query) {
 		q.checkNames("GroupBy", columns...)
@@ -297,15 +299,6 @@ func (q *Query) body() (*queryBody, error) {
 	columns, all := q.columns, q.selectAll
 	if all && (len(columns) > 0 || len(q.aggs) > 0) {
 		return nil, fmt.Errorf("wavehouse: query on %q: SelectAll can't be combined with Select columns or aggregates", q.table)
-	}
-	if !all {
-		// The server returns a group key only when it is selected.
-		columns = slices.Clone(columns)
-		for _, g := range q.groupBy {
-			if !slices.Contains(columns, g) {
-				columns = append(columns, g)
-			}
-		}
 	}
 	return &queryBody{
 		Columns:      columns,

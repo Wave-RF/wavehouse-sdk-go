@@ -322,8 +322,8 @@ func ExampleQuery_Scan() {
 	}
 	err = wh.From("clicks").
 		Count("*", "views").
-		GroupBy("page").
 		Select("page").
+		GroupBy("page").
 		OrderBy("views", wavehouse.Desc).
 		Limit(10).
 		Last("received_timestamp", 24*time.Hour).
@@ -341,8 +341,8 @@ func ExampleQuery_Last() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	// "The last hour" is measured on the server's clock; GroupBy selects page for you.
-	rows, err := wh.From("clicks").Last("received_timestamp", time.Hour).Count("*", "").GroupBy("page").Fetch(context.Background())
+	// "The last hour" is measured on the server's clock.
+	rows, err := wh.From("clicks").Last("received_timestamp", time.Hour).Select("page").Count("*", "").GroupBy("page").Fetch(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}
