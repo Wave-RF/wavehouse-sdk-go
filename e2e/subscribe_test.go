@@ -3,7 +3,9 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -193,4 +195,50 @@ func TestSubscribeCloseEndsNext(t *testing.T) {
 func TestSubscribeUnknownTenant(t *testing.T) {
 	_, err := newClient(t).WithTenant("nope").Subscribe(t.Context(), "e2e_events", nil)
 	require.ErrorIs(t, err, wavehouse.ErrNotFound)
+}
+
+// dropFirst ends the first stream's body at once, as a proxy dropping the
+// connection would.
+type dropFirst struct {
+	base http.RoundTripper
+	n    atomic.Int32
+}
+
+func (d *dropFirst) RoundTrip(r *http.Request) (*http.Response, error) {
+	res, err := d.base.RoundTrip(r)
+	if err == nil && d.n.Add(1) == 1 {
+		res.Body = endedBody{res.Body}
+	}
+	return res, err
+}
+
+type endedBody struct{ io.ReadCloser }
+
+func (endedBody) Read([]byte) (int, error) { return 0, io.EOF }
+
+// A row ingested while the stream reconnects, before it delivered anything,
+// still arrives: the reconnect replays from the first connection's start.
+func TestSubscribeReconnectBeforeAnyEvent(t *testing.T) {
+	reconnecting := make(chan struct{}, 1)
+	c := newClient(t,
+		wavehouse.WithHTTPClient(&http.Client{Transport: &dropFirst{base: http.DefaultTransport}}),
+		wavehouse.WithRetry(wavehouse.RetryPolicy{MaxAttempts: 2, MinBackoff: 2 * time.Second, MaxBackoff: 4 * time.Second}))
+	sub := subscribe(t, c, &wavehouse.SubscribeOptions{OnState: func(s wavehouse.State) {
+		if s == wavehouse.StateReconnecting {
+			select {
+			case reconnecting <- struct{}{}:
+			default:
+			}
+		}
+	}})
+	events := pump(sub)
+	select {
+	case <-reconnecting:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "the first connection never dropped")
+	}
+	name := uniqueName(t)
+	ingest(t, eventRow(name, 7)) // inside the 1.6s-2.4s backoff
+	got := collect(t, events, name, 1)
+	assert.Equal(t, json.Number("7"), got[0].Values[2])
 }
