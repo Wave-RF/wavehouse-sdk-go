@@ -14,8 +14,8 @@ LINT_TOOLCHAIN := go1.26.6
 # gofumpt runs through `go run` so go.mod keeps no dependencies, not even tool ones.
 GOFUMPT := go run mvdan.cc/gofumpt@v0.9.2
 
-# Total statement coverage must not fall below this percent. Measured 97.8% after the client core rewrite; floor is two points under.
-COVERAGE_FLOOR := 95
+# Total statement coverage must not fall below this percent. Measured 99.6% after the ingest, query, pipe and SQL calls; floor is two points under, rounded down.
+COVERAGE_FLOOR := 97
 
 ci: fmt vet lint cover shell ## Everything CI runs
 

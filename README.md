@@ -33,17 +33,33 @@ func main() {
         log.Fatal(err)
     }
 
-    table, err := wh.Table(context.Background(), "clicks")
+    ctx := context.Background()
+
+    // Write: a struct, a map, or a slice of either. Rejected records come back as an *InsertError.
+    type click struct {
+        Page  string `json:"page"`
+        Score uint64 `json:"score"`
+    }
+    if _, err := wh.From("clicks").Insert(ctx, []click{{"/home", 3}, {"/about", 7}}); err != nil {
+        log.Fatal(err)
+    }
+
+    // Read: a chain that ends in Scan, into structs or maps.
+    var top []click
+    err = wh.From("clicks").
+        Select("page", "score").
+        Where("score", wavehouse.Gt, 5).
+        OrderBy("score", wavehouse.Desc).
+        Limit(10).
+        Scan(ctx, &top)
     if err != nil {
         log.Fatal(err)
     }
-    for _, col := range table.Columns {
-        fmt.Println(col.Name, col.Type)
-    }
+    fmt.Println(top)
 }
 ```
 
-Ingest, queries, pipes and streaming are being rewritten onto this client and return before the first release.
+The same client runs pipes (`wh.Pipe("top_pages").Param("limit", 10).Scan(ctx, &rows)`), raw SQL as an admin (`wh.SQL("SELECT ...").Scan(ctx, &rows)`, or `.Exec(ctx)` for DDL) and the admin reads (`wh.Tables`, `wh.Pipes`, `wh.DLQStats`). Streaming is being rewritten onto this client and returns before the first release.
 
 ## Documentation
 
