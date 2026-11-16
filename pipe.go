@@ -63,8 +63,9 @@ func (p *PipeCall) request() (*request, error) {
 // Scan runs the pipe and decodes its rows into dst, a non-nil pointer to a
 // slice of structs or maps, with the same rules as [Query.Scan]. A pipe that
 // writes answers with no rows. Retries: a pipe may write, so a transport error
-// is retried only when the request never left, and a server error only when
-// the server says it is retryable.
+// is retried only when the request never left, and a failed answer only when
+// the server itself marks it retryable, or it is a 429 or a 503 with
+// Retry-After. A bare 5xx, which a proxy can send after the write ran, is not.
 func (p *PipeCall) Scan(ctx context.Context, dst any) error {
 	if err := checkScanDst(dst); err != nil {
 		return err

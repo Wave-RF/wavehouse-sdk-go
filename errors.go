@@ -24,6 +24,8 @@ type APIError struct {
 	// Retryable is the server's "retryable" verdict when the body carries
 	// one; otherwise true for 408, 429 and every 5xx.
 	Retryable bool
+	// fromServer is whether Retryable came from the body rather than the status.
+	fromServer bool
 	// RetryAfter is the parsed Retry-After header (seconds or an HTTP-date),
 	// 0 when absent.
 	RetryAfter time.Duration
