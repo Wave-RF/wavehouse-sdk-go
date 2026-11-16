@@ -27,8 +27,8 @@ const (
 	// callRead covers GETs, /v1/query and the schema refresh: retry any
 	// transport error and any retryable APIError.
 	callRead callKind = iota
-	// callIngest is at-least-once, and the server's dedupe ids make it
-	// exactly-once, so it retries like a read.
+	// callIngest is at-least-once, so it retries like a read. Exactly-once
+	// holds only where the server has dedupe turned on and the rows carry an id.
 	callIngest
 	// callPipe may run a write pipe: retry a transport error only when the
 	// request never left, and an APIError only on the server's own
@@ -54,10 +54,10 @@ type request struct {
 	contentType string // required with a body
 	accept      string // "" means application/json
 	// callHeader is the caller's per-call headers: sent over WithHeader and
-	// WithHeaderFunc, under Authorization and the SDK's own.
+	// WithHeaderFunc, under the SDK's own (and its Authorization, if it has one).
 	callHeader http.Header
 	// header is the SDK's own protocol header (Last-Event-ID), sent over the
-	// caller's but under Authorization.
+	// caller's but under the SDK's Authorization.
 	header http.Header
 }
 
@@ -196,7 +196,8 @@ func (c *Client) send(ctx, actx context.Context, r *request) (*http.Response, er
 	if err != nil {
 		return nil, fmt.Errorf("wavehouse: %s %s: %w: %w", r.method, r.path, errTokenSource, err)
 	}
-	req.Header.Del("Authorization")
+	// The SDK's credential wins; with none to send, a caller's own
+	// Authorization (WithHeader, WithHeaderFunc, a call's Header) goes through.
 	if auth != "" {
 		req.Header.Set("Authorization", auth)
 	}

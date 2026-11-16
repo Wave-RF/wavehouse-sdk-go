@@ -33,7 +33,6 @@ type wireCase struct {
 	PipeName   string            `json:"pipe_name"`
 	PipeParams map[string]any    `json:"pipe_params"`
 	SQL        string            `json:"sql"`
-	Tenant     string            `json:"tenant"` // the admin calls' ?tenant=, through ForTenant
 
 	ExpectedPath        string            `json:"expected_path"`
 	ExpectedMethod      string            `json:"expected_method"`
@@ -123,7 +122,6 @@ func TestConformanceWireFormat(t *testing.T) {
 func runWireCase(t *testing.T, c *Client, tc wireCase) error {
 	t.Helper()
 	ctx := t.Context()
-	ft := ForTenant(tc.Tenant)
 	switch tc.Endpoint {
 	case "query":
 		q := applyOps(t, c.From(tc.Table), tc.Operations)
@@ -148,14 +146,14 @@ func runWireCase(t *testing.T, c *Client, tc wireCase) error {
 		_, err := p.Fetch(ctx)
 		return err
 	case "sql":
-		s := c.SQL(tc.SQL).ForTenant(tc.Tenant)
+		s := c.SQL(tc.SQL)
 		for k, v := range tc.CallHeader {
 			s = s.Header(k, v)
 		}
 		_, err := s.Fetch(ctx)
 		return err
 	case "sql_exec":
-		s := c.SQL(tc.SQL).ForTenant(tc.Tenant)
+		s := c.SQL(tc.SQL)
 		for k, v := range tc.CallHeader {
 			s = s.Header(k, v)
 		}
@@ -166,25 +164,25 @@ func runWireCase(t *testing.T, c *Client, tc wireCase) error {
 		_, err := c.Version(ctx)
 		return err
 	case "schema_list":
-		_, err := c.Tables(ctx, ft)
+		_, err := c.Tables(ctx)
 		return err
 	case "schema_table":
-		_, err := c.TableSchema(ctx, tc.Table, ft)
+		_, err := c.TableSchema(ctx, tc.Table)
 		return err
 	case "schema_refresh":
-		_, err := c.RefreshSchema(ctx, ft)
+		_, err := c.RefreshSchema(ctx)
 		return err
 	case "dlq_list":
-		_, err := c.DLQStats(ctx, ft)
+		_, err := c.DLQStats(ctx)
 		return err
 	case "settings_reload":
-		_, err := c.ReloadSettings(ctx, ft)
+		_, err := c.ReloadSettings(ctx)
 		return err
 	case "pipes_list":
-		_, err := c.Pipes(ctx, ft)
+		_, err := c.Pipes(ctx)
 		return err
 	case "pipes_get":
-		_, err := c.PipeDefinition(ctx, tc.PipeName, ft)
+		_, err := c.PipeDefinition(ctx, tc.PipeName)
 		return err
 	}
 	// A hard failure, so a case nobody wired up can't hide drift between the SDKs.

@@ -192,11 +192,6 @@ func TestSubscribeCloseEndsNext(t *testing.T) {
 	require.NoError(t, sub.Err())
 }
 
-func TestSubscribeUnknownTenant(t *testing.T) {
-	_, err := newClient(t, wavehouse.WithHeader("X-Tenant-ID", "nope")).Subscribe(t.Context(), "e2e_events", nil)
-	require.ErrorIs(t, err, wavehouse.ErrNotFound)
-}
-
 // dropFirst ends the first stream's body at once, as a proxy dropping the
 // connection would.
 type dropFirst struct {

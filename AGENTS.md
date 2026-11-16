@@ -1,10 +1,10 @@
 # AGENTS.md — Wave-RF/wavehouse-sdk-go
 
-The Go client for [WaveHouse](https://github.com/Wave-RF/WaveHouse). Module `github.com/Wave-RF/wavehouse-sdk-go`, package `wavehouse`, Go floor in `go.mod`. It was imported with history from the `go-sdk` branch of the server repository ([Wave-RF/WaveHouse#434](https://github.com/Wave-RF/WaveHouse/pull/434)) and is not released yet.
+The Go client for [WaveHouse](https://github.com/Wave-RF/WaveHouse). Module `github.com/Wave-RF/wavehouse-sdk-go`, package `wavehouse`, Go floor in `go.mod`. It was imported with history from the `go-sdk` branch of the server repository ([Wave-RF/WaveHouse#434](https://github.com/Wave-RF/WaveHouse/pull/434)). `v0.1.0` is its first release.
 
 ## Layout
 
-- The package is flat at the repo root: `client.go` (`New`, `Client`), `options.go` (the `With…` options and `RetryPolicy`), `transport.go` (requests, retries, redirects, decoding), `errors.go` (`APIError`, sentinels), `admin.go` (health, version, the `/v1/ops/*` reads and `ForTenant`, their per-call `?tenant=`; `X-Tenant-ID` stays the caller's, via `WithHeader`), `insert.go` (`Client.From`, `Query.Insert`, `InsertNDJSON`), `query.go` (the immutable `Query` builder, `Scan` and `Fetch`), `row.go` (`Row` and its typed accessors), `pipe.go` (`Client.Pipe`), `sql.go` (`Client.SQL`), `subscribe.go` (`Subscribe`: the stream's reconnect loop and row decoding) and `sse.go` (the event-stream parser).
+- The package is flat at the repo root: `client.go` (`New`, `Client`), `options.go` (the `With…` options and `RetryPolicy`), `transport.go` (requests, retries, redirects, decoding), `errors.go` (`APIError`, sentinels), `admin.go` (health, version and the `/v1/ops/*` reads), `insert.go` (`Client.From`, `Query.Insert`, `InsertNDJSON`), `query.go` (the immutable `Query` builder, `Scan` and `Fetch`), `row.go` (`Row` and its typed accessors), `pipe.go` (`Client.Pipe`), `sql.go` (`Client.SQL`), `subscribe.go` (`Subscribe`: the stream's reconnect loop and row decoding) and `sse.go` (the event-stream parser).
 - `testdata/wire_cases.json` holds the request conformance cases. The JS SDK replays the same file; a case with an `"sdks"` list is for those SDKs only.
 - `e2e/` holds the live tests, as a module of their own so their dependencies stay out of the SDK's `go.mod`. They start ClickHouse and the server's `ghcr.io/wave-rf/wavehouse:dev` image with testcontainers; `e2e/testdata/settings/` is that server's settings directory.
 - `scripts/` and `.github/` hold the files kept in step with `wavehouse-sdk-js` (see *Files kept in step*) plus this repo's `ci.yml`, `release.yml` and `scripts/ci/release.sh`.
@@ -29,7 +29,7 @@ The Go client for [WaveHouse](https://github.com/Wave-RF/WaveHouse). Module `git
 
 ## Known gap
 
-The SDK is unreleased and has caught up with the server protocol as of this branch. Where it and the server disagree, the server wins; later drift is tracked in this repository's issues.
+The SDK has caught up with the server protocol as of `v0.1.0`. Where it and the server disagree, the server wins; later drift is tracked in this repository's issues.
 
 ## Releasing
 

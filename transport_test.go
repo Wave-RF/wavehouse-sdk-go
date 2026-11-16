@@ -24,11 +24,18 @@ func TestAuthHeaders(t *testing.T) {
 		opts []Option
 		want []string // Authorization values received
 	}{
-		"bearer token":      {[]Option{WithToken("jwt")}, []string{"Bearer jwt"}},
-		"operator key":      {[]Option{WithOperatorKey("k3y")}, []string{"Operator k3y"}},
-		"none by default":   {nil, nil},
-		"source empty":      {[]Option{WithTokenSource(func(context.Context) (string, error) { return "", nil })}, nil},
-		"custom is dropped": {[]Option{WithHeader("Authorization", "Basic smuggled")}, nil},
+		"bearer token":    {[]Option{WithToken("jwt")}, []string{"Bearer jwt"}},
+		"operator key":    {[]Option{WithOperatorKey("k3y")}, []string{"Operator k3y"}},
+		"none by default": {nil, nil},
+		"source empty":    {[]Option{WithTokenSource(func(context.Context) (string, error) { return "", nil })}, nil},
+		// With no SDK credential the caller's own header goes through; any SDK credential wins.
+		"custom passes with no credential": {[]Option{WithHeader("Authorization", "Basic mine")}, []string{"Basic mine"}},
+		"custom passes past empty source":  {[]Option{WithHeader("Authorization", "Basic mine"), WithTokenSource(func(context.Context) (string, error) { return "", nil })}, []string{"Basic mine"}},
+		"header func passes": {[]Option{WithHeaderFunc(func(context.Context) (http.Header, error) {
+			return http.Header{"authorization": {"Basic func"}}, nil
+		})}, []string{"Basic func"}},
+		"token beats custom":        {[]Option{WithToken("jwt"), WithHeader("Authorization", "Basic mine")}, []string{"Bearer jwt"}},
+		"operator key beats custom": {[]Option{WithOperatorKey("k3y"), WithHeader("Authorization", "Basic mine")}, []string{"Operator k3y"}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -38,6 +45,17 @@ func TestAuthHeaders(t *testing.T) {
 			assert.Equal(t, tc.want, rec.last(t).header.Values("Authorization"))
 		})
 	}
+}
+
+func TestCallHeaderAuthorization(t *testing.T) {
+	rec := newRecorder(t, wireAnswer)
+	_, err := rec.client(t).From("t").Header("Authorization", "Basic call").Fetch(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Basic call"}, rec.last(t).header.Values("Authorization"))
+
+	_, err = rec.client(t, WithToken("jwt")).From("t").Header("Authorization", "Basic call").Fetch(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Bearer jwt"}, rec.last(t).header.Values("Authorization"))
 }
 
 func TestTokenSourcePerRequest(t *testing.T) {
@@ -78,11 +96,11 @@ func TestSDKHeadersWin(t *testing.T) {
 	assert.Empty(t, h.Values("Content-Type"))
 }
 
-// A header set with WithHeader that the SDK does not own, X-Tenant-ID
+// A header set with WithHeader that the SDK does not own, X-Trace-Id
 // included, is sent unchanged on every kind of call.
 func TestCustomHeaderPassesThrough(t *testing.T) {
 	rec := newRecorder(t, wireAnswer)
-	c := rec.client(t, WithHeader("X-Tenant-ID", "acme"))
+	c := rec.client(t, WithHeader("X-Trace-Id", "abc"))
 
 	for name, call := range map[string]func() error{
 		"query":  func() error { _, err := c.From("t").Fetch(t.Context()); return err },
@@ -93,8 +111,7 @@ func TestCustomHeaderPassesThrough(t *testing.T) {
 	} {
 		require.NoError(t, call(), name)
 		got := rec.last(t)
-		assert.Equal(t, []string{"acme"}, got.header.Values("X-Tenant-ID"), name)
-		assert.NotContains(t, got.rawQuery, "tenant", name)
+		assert.Equal(t, []string{"abc"}, got.header.Values("X-Trace-Id"), name)
 	}
 }
 

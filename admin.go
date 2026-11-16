@@ -8,11 +8,10 @@ import (
 )
 
 // Health pings GET /v1/health, which answers 200 with an empty body once the
-// server is past boot and 503 while it is not; nil means 200. It resolves
-// the client's tenant first, so an unknown tenant is a 404 ([ErrNotFound]).
+// server is past boot and 503 while it is not; nil means 200.
 //
 // The endpoint is public: it checks neither the credential nor ClickHouse, so
-// a nil result proves only that the server is up and the tenant exists. A
+// a nil result proves only that the server is up. A
 // health check for a datasource must go further: call Health, then an
 // authenticated read such as From(table).Limit(1) or [Client.Tables], and map
 // [ErrUnauthorized] and [ErrForbidden] to "bad credential" and "not allowed".
@@ -60,54 +59,11 @@ type Column struct {
 	Position int `json:"position"`
 }
 
-// AdminOption adjusts one call to an admin route (/v1/ops/*). See [ForTenant].
-type AdminOption func(*adminOptions)
-
-type adminOptions struct{ tenant string }
-
-// ForTenant makes an admin call address the tenant id, sent as the ?tenant=
-// query parameter; without it the call serves the default tenant "0" (and
-// [Client.ReloadSettings] reloads every tenant). An unknown id is
-// [ErrNotFound]. An empty id sends nothing.
-//
-// This is not the X-Tenant-ID header: the admin routes ignore that header, so
-// WithHeader("X-Tenant-ID", id) selects a tenant for data routes only and
-// stays the caller's job.
-func ForTenant(id string) AdminOption {
-	return func(o *adminOptions) { o.tenant = id }
-}
-
-// tenantQuery builds the query of an admin call, from extra pairs (name, value, ...)
-// and the tenant of opts.
-func tenantQuery(opts []AdminOption, kv ...string) url.Values {
-	var o adminOptions
-	for _, f := range opts {
-		if f != nil {
-			f(&o)
-		}
-	}
-	var q url.Values
-	for i := 0; i+1 < len(kv); i += 2 {
-		if q == nil {
-			q = url.Values{}
-		}
-		q.Set(kv[i], kv[i+1])
-	}
-	if o.tenant != "" {
-		if q == nil {
-			q = url.Values{}
-		}
-		q.Set("tenant", o.tenant)
-	}
-	return q
-}
-
-// Tables lists every table schema of tenant "0", or of the tenant
-// [ForTenant] names (the X-Tenant-ID header does not affect admin routes), from GET /v1/ops/schema. Admin role or operator key. A
-// read: retried.
-func (c *Client) Tables(ctx context.Context, opts ...AdminOption) ([]TableSchema, error) {
+// Tables lists every table schema, from GET /v1/ops/schema. Admin role or
+// operator key. A read: retried.
+func (c *Client) Tables(ctx context.Context) ([]TableSchema, error) {
 	var ts []TableSchema
-	if err := c.doJSON(ctx, &request{kind: callRead, method: http.MethodGet, path: "/v1/ops/schema", query: tenantQuery(opts)}, &ts); err != nil {
+	if err := c.doJSON(ctx, &request{kind: callRead, method: http.MethodGet, path: "/v1/ops/schema"}, &ts); err != nil {
 		return nil, err
 	}
 	return ts, nil
@@ -115,14 +71,13 @@ func (c *Client) Tables(ctx context.Context, opts ...AdminOption) ([]TableSchema
 
 // TableSchema returns one table's schema, from GET /v1/ops/schema?table=name;
 // an unknown table is [ErrNotFound]. Admin role or operator key. A read:
-// retried. [ForTenant] reads it from another tenant. To query a table, use
-// [Client.From].
-func (c *Client) TableSchema(ctx context.Context, name string, opts ...AdminOption) (*TableSchema, error) {
+// retried. To query a table, use [Client.From].
+func (c *Client) TableSchema(ctx context.Context, name string) (*TableSchema, error) {
 	if name == "" {
 		return nil, errors.New("wavehouse: TableSchema: empty table name")
 	}
 	var t TableSchema
-	r := &request{kind: callRead, method: http.MethodGet, path: "/v1/ops/schema", query: tenantQuery(opts, "table", name)}
+	r := &request{kind: callRead, method: http.MethodGet, path: "/v1/ops/schema", query: url.Values{"table": {name}}}
 	if err := c.doJSON(ctx, r, &t); err != nil {
 		return nil, err
 	}
@@ -132,29 +87,26 @@ func (c *Client) TableSchema(ctx context.Context, name string, opts ...AdminOpti
 // RefreshSchema makes the server re-discover its tables in ClickHouse now,
 // rather than at its next interval, and returns the result, via
 // POST /v1/ops/schema/refresh. Admin role or operator key. Treated as a read:
-// retried. [ForTenant] refreshes another tenant's.
-func (c *Client) RefreshSchema(ctx context.Context, opts ...AdminOption) ([]TableSchema, error) {
+// retried.
+func (c *Client) RefreshSchema(ctx context.Context) ([]TableSchema, error) {
 	var ts []TableSchema
-	if err := c.doJSON(ctx, &request{kind: callRead, method: http.MethodPost, path: "/v1/ops/schema/refresh", query: tenantQuery(opts)}, &ts); err != nil {
+	if err := c.doJSON(ctx, &request{kind: callRead, method: http.MethodPost, path: "/v1/ops/schema/refresh"}, &ts); err != nil {
 		return nil, err
 	}
 	return ts, nil
 }
 
-// DLQStats counts the rows parked in a tenant's dead-letter queue.
+// DLQStats counts the rows parked in the dead-letter queue.
 type DLQStats struct {
 	Tables map[string]int64 `json:"tables"` // per table; tables with none are absent
 	Total  int64            `json:"total"`
 }
 
-// DLQStats returns the dead-letter queue counts of tenant "0" (or the one [ForTenant]
-// names; the X-Tenant-ID header does not affect admin routes), from
-// GET /v1/ops/dlq/stats. Admin role or operator key. A read: retried.
-// [ForTenant] reads another tenant's; one with no dead-letter queue is
-// [ErrNotFound].
-func (c *Client) DLQStats(ctx context.Context, opts ...AdminOption) (*DLQStats, error) {
+// DLQStats returns the dead-letter queue counts, from GET /v1/ops/dlq/stats.
+// Admin role or operator key. A read: retried.
+func (c *Client) DLQStats(ctx context.Context) (*DLQStats, error) {
 	var s DLQStats
-	if err := c.doJSON(ctx, &request{kind: callRead, method: http.MethodGet, path: "/v1/ops/dlq/stats", query: tenantQuery(opts)}, &s); err != nil {
+	if err := c.doJSON(ctx, &request{kind: callRead, method: http.MethodGet, path: "/v1/ops/dlq/stats"}, &s); err != nil {
 		return nil, err
 	}
 	return &s, nil
@@ -181,10 +133,9 @@ type Finding struct {
 // When the server rejects the directory (422) it returns the result, whose
 // Findings say why, together with an [*APIError]. Admin role or operator key;
 // over a nested settings directory, the operator key only. Idempotent, so
-// retried like a read. [ForTenant] reloads that tenant's folder alone; without
-// it the whole directory is reloaded.
-func (c *Client) ReloadSettings(ctx context.Context, opts ...AdminOption) (*ReloadResult, error) {
-	r := &request{kind: callRead, method: http.MethodPost, path: "/v1/ops/settings/reload", query: tenantQuery(opts)}
+// retried like a read.
+func (c *Client) ReloadSettings(ctx context.Context) (*ReloadResult, error) {
+	r := &request{kind: callRead, method: http.MethodPost, path: "/v1/ops/settings/reload"}
 	res, err := c.do(ctx, r)
 	if err != nil {
 		if ae, ok := errors.AsType[*APIError](err); ok && ae.StatusCode == http.StatusUnprocessableEntity && res != nil {
@@ -222,12 +173,11 @@ type PipeParameter struct {
 	Default any `json:"default,omitempty"`
 }
 
-// Pipes lists tenant "0"'s named pipes, or those of the tenant [ForTenant]
-// names (the X-Tenant-ID header does not affect admin routes), from GET /v1/ops/pipes. Admin role or operator key. A
-// read: retried.
-func (c *Client) Pipes(ctx context.Context, opts ...AdminOption) ([]PipeDefinition, error) {
+// Pipes lists the named pipes, from GET /v1/ops/pipes. Admin role or operator
+// key. A read: retried.
+func (c *Client) Pipes(ctx context.Context) ([]PipeDefinition, error) {
 	var ps []PipeDefinition
-	if err := c.doJSON(ctx, &request{kind: callRead, method: http.MethodGet, path: "/v1/ops/pipes", query: tenantQuery(opts)}, &ps); err != nil {
+	if err := c.doJSON(ctx, &request{kind: callRead, method: http.MethodGet, path: "/v1/ops/pipes"}, &ps); err != nil {
 		return nil, err
 	}
 	return ps, nil
@@ -235,13 +185,13 @@ func (c *Client) Pipes(ctx context.Context, opts ...AdminOption) ([]PipeDefiniti
 
 // PipeDefinition returns one named pipe's definition, from
 // GET /v1/ops/pipes/{name}; an unknown pipe is [ErrNotFound]. Admin role or
-// operator key. A read: retried. [ForTenant] reads it from another tenant.
-func (c *Client) PipeDefinition(ctx context.Context, name string, opts ...AdminOption) (*PipeDefinition, error) {
+// operator key. A read: retried.
+func (c *Client) PipeDefinition(ctx context.Context, name string) (*PipeDefinition, error) {
 	if name == "" {
 		return nil, errors.New("wavehouse: PipeDefinition: empty pipe name")
 	}
 	var p PipeDefinition
-	r := &request{kind: callRead, method: http.MethodGet, path: "/v1/ops/pipes/" + url.PathEscape(name), query: tenantQuery(opts)}
+	r := &request{kind: callRead, method: http.MethodGet, path: "/v1/ops/pipes/" + url.PathEscape(name)}
 	if err := c.doJSON(ctx, r, &p); err != nil {
 		return nil, err
 	}

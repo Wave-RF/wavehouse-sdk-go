@@ -72,15 +72,13 @@ func WithHTTPClient(hc *http.Client) Option {
 // WithHeader adds a header to every request, REST calls and the stream
 // connection alike. It is the lowest layer: [WithHeaderFunc] and a per-call
 // header replace it, key by key, case-insensitively. The headers the SDK sets
-// itself (Authorization, Content-Type, Accept and User-Agent) win: a value
-// given here for one of them is replaced, or dropped where the SDK sends none.
+// itself (Content-Type, Accept and User-Agent, and Authorization when the SDK
+// has a token or operator key to send) win: a value given here for one of them
+// is replaced, or dropped where the SDK sends none. With no SDK credential, an
+// Authorization given here is sent as it is.
 // Every other header is sent unchanged. A later WithHeader for the same key replaces the earlier one. Any
 // custom header counts as a credential when deciding whether a redirect may be
 // followed.
-//
-// A client of a multi-tenant server selects its tenant with
-// WithHeader("X-Tenant-ID", id). The admin routes ignore that header; pass
-// [ForTenant] to an admin call to address a tenant there.
 func WithHeader(key, value string) Option {
 	return func(o *options) {
 		if checkHeader(key, value) != nil {

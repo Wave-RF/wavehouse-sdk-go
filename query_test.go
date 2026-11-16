@@ -308,10 +308,10 @@ func TestQueryAPIError(t *testing.T) {
 
 func TestQueryHeadersAndAuth(t *testing.T) {
 	rec := newRecorder(t, reply(200, `[]`))
-	_, err := rec.client(t, WithToken("jwt"), WithHeader("X-Tenant-ID", "acme")).From("t").Fetch(t.Context())
+	_, err := rec.client(t, WithToken("jwt"), WithHeader("X-Trace-Id", "abc")).From("t").Fetch(t.Context())
 	require.NoError(t, err)
 	got := rec.last(t)
-	assert.Equal(t, "acme", got.header.Get("X-Tenant-ID"))
+	assert.Equal(t, "abc", got.header.Get("X-Trace-Id"))
 	assert.Equal(t, "Bearer jwt", got.header.Get("Authorization"))
 	assert.Equal(t, "table=t", got.rawQuery)
 }

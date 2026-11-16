@@ -9,8 +9,7 @@ The first release. The SDK was imported from the `go-sdk` branch of WaveHouse ([
 ### Client
 
 - `New(baseURL, opts...)` with `WithToken`, `WithTokenSource`, `WithOperatorKey`, `WithHTTPClient`, `WithHeader`, `WithHeaderFunc`, `WithRetry` and `WithUserAgent`. Invalid options are all reported by `New` at once. A base URL with no scheme gets `http://` for a loopback host and `https://` for any other; a path, or a URL with a query or fragment, is refused.
-- The token source and the header func run before every attempt, retries and stream connects included, so they must be cheap; caching is the implementer's job. Header precedence, lowest to highest: `WithHeader`, `WithHeaderFunc`, a call's own `Header`, then the SDK's (Authorization, Content-Type, Accept, User-Agent).
-- Multi-tenant servers: send `X-Tenant-ID` with `WithHeader`; admin calls take `ForTenant(id)`, which sends `?tenant=`.
+- The token source and the header func run before every attempt, retries and stream connects included, so they must be cheap; caching is the implementer's job. Header precedence, lowest to highest: `WithHeader`, `WithHeaderFunc`, a call's own `Header`, then the SDK's (Content-Type, Accept, User-Agent, and Authorization when a token, token source result or operator key supplies one; with none, a caller's own `Authorization` header is sent).
 
 ### Queries, inserts, pipes and SQL
 

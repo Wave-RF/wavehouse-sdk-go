@@ -417,8 +417,8 @@ func TestSubscribeTerminalAfterLive(t *testing.T) {
 			if n == 1 {
 				return sseEnds(r, schemaFrame("a"), rowFrame(1, 1)), nil
 			}
-			// The tenant was removed while the stream was open.
-			return fakeResponse(r, 404, `{"error":"unknown tenant"}`), nil
+			// The table was removed while the stream was open.
+			return fakeResponse(r, 404, `{"error":"unknown table"}`), nil
 		})
 		sub, err := c.Subscribe(t.Context(), "t", &SubscribeOptions{OnState: st.on})
 		require.NoError(t, err)
@@ -475,7 +475,7 @@ func TestSubscribeRetryAfter(t *testing.T) {
 		c, f := newFakeStream(t, func(n int, r *http.Request) (*http.Response, error) {
 			switch n {
 			case 1:
-				return fakeResponse(r, 503, `{"error":"tenant rejected"}`, "Retry-After", "7"), nil
+				return fakeResponse(r, 503, `{"error":"server rejected"}`, "Retry-After", "7"), nil
 			case 2:
 				return fakeResponse(r, 429, `{"error":"slow down"}`, "Retry-After", "3"), nil
 			case 3:
@@ -569,7 +569,7 @@ func TestSubscribeHeaders(t *testing.T) {
 			}
 			return sseOpen(r), nil
 		},
-			WithHeader("X-Tenant-ID", "acme"), WithHeader("Last-Event-ID", "custom-loses"),
+			WithHeader("X-Trace-Id", "abc"), WithHeader("Last-Event-ID", "custom-loses"),
 			WithTokenSource(func(context.Context) (string, error) { return fmt.Sprintf("tok-%d", calls.Add(1)), nil }))
 		sub, err := c.Subscribe(t.Context(), "clicks", &SubscribeOptions{
 			ResumeID: "2026-11-16T00:00:00Z",
@@ -582,7 +582,7 @@ func TestSubscribeHeaders(t *testing.T) {
 		reqs := f.requests()
 		require.Len(t, reqs, 2)
 		for i, req := range reqs {
-			assert.Equal(t, "acme", req.Header.Get("X-Tenant-ID"))
+			assert.Equal(t, "abc", req.Header.Get("X-Trace-Id"))
 			assert.Equal(t, "table=clicks", req.URL.RawQuery)
 			assert.Equal(t, []string{"2026-11-16T00:00:00Z"}, req.Header.Values("Last-Event-ID"))
 			assert.Equal(t, fmt.Sprintf("Bearer tok-%d", i+1), req.Header.Get("Authorization"), "token source not re-read")

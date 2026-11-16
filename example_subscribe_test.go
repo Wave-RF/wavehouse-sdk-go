@@ -2,7 +2,6 @@ package wavehouse_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -23,12 +22,9 @@ func ExampleClient_Subscribe() {
 	sub, err := wh.Subscribe(ctx, "clicks", &wavehouse.SubscribeOptions{
 		Since: time.Now().Add(-time.Hour), // replay the last hour first
 	})
-	// ErrNotFound here is an unknown tenant. An unknown table is no error: the
-	// subscription stays live and empty, so check the table first with
-	// TableSchema or a Limit(1) query.
-	if errors.Is(err, wavehouse.ErrNotFound) {
-		log.Fatal("no such tenant")
-	} else if err != nil {
+	// An unknown table is no error: the subscription stays live and empty, so
+	// check the table first with TableSchema or a Limit(1) query.
+	if err != nil {
 		log.Fatal(err)
 	}
 

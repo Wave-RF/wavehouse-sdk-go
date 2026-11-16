@@ -126,7 +126,8 @@ func (q *Query) checkNames(call string, names ...string) {
 
 // Header sets a header on this query's request, over the client's
 // [WithHeader] and [WithHeaderFunc] headers and under the SDK's own
-// (Authorization, Content-Type, Accept, User-Agent). A later Header for the
+// (Content-Type, Accept, User-Agent, and Authorization when the SDK has a
+// token or operator key to send; otherwise a caller's Authorization is sent). A later Header for the
 // same key, in any letter case, replaces the earlier one; values are never
 // joined. It applies to Scan, Fetch and Insert, and an invalid name or value
 // is an error from them, before anything is sent. It returns a copy.

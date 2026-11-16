@@ -2,7 +2,7 @@
 
 Official Go client for [WaveHouse](https://github.com/Wave-RF/WaveHouse), a schema-aware real-time API gateway for ClickHouse. It has no third-party runtime dependencies, SSE parser included.
 
-**Status: not released yet.** The code was imported from the `go-sdk` branch of the WaveHouse repository and has been brought up to date with the server protocol as of this branch. No version is tagged yet.
+**Status: v0.1.0 is the first release.** The code was imported from the `go-sdk` branch of the WaveHouse repository and rewritten for the current server protocol. Before 1.0, a minor release may break the API.
 
 ## Install
 
@@ -61,13 +61,13 @@ func main() {
 
 `Fetch` returns `[]wavehouse.Row`, a map with typed accessors (`row.Uint64("score")`, `row.Time("ts")`, ...) that keep 64-bit integers exact and report a null or missing column by name. A window is `Last("ts", time.Hour)` (the server's clock) or `TimeRange("ts", from, to)`; `GroupBy` only sets `group_by`, so select the key too (`Select("page").GroupBy("page")`) to get it back; an aggregate with no alias is named as in the JS SDK (`count`, `sum_<column>`, `avg_<column>`, ...; `Aggregate` sends none), and `Select("*")` is a column name, so use `SelectAll` for every readable column. A bad operator or direction, an empty `In` list, or a `Where` on a query used for `Insert` is an error from the call, before anything is sent. `wh.Health` is a public liveness probe; the package examples show a real datasource health check, and a per-request token for a plugin that forwards its user's credential.
 
-The same client runs pipes (`wh.Pipe("top_pages").Param("limit", 10).Scan(ctx, &rows)`), raw SQL as an admin (`wh.SQL("SELECT ...").Scan(ctx, &rows)`, or `.Exec(ctx)` for DDL) and the admin reads (`wh.Tables`, `wh.TableSchema`, `wh.Pipes`, `wh.DLQStats`). An admin call takes `wavehouse.ForTenant("acme")` to address another tenant (`wh.SQL(...).ForTenant("acme")` for SQL); it sends `?tenant=`, which the admin routes read in place of the `X-Tenant-ID` header.
+The same client runs pipes (`wh.Pipe("top_pages").Param("limit", 10).Scan(ctx, &rows)`), raw SQL as an admin (`wh.SQL("SELECT ...").Scan(ctx, &rows)`, or `.Exec(ctx)` for DDL) and the admin reads (`wh.Tables`, `wh.TableSchema`, `wh.Pipes`, `wh.DLQStats`).
 
 ## Authentication, headers and timeouts
 
 `WithToken` sends a fixed JWT. For one that expires, `WithTokenSource(fn)` calls `fn` **before every attempt**: each retry, and each stream connect, runs it again, so a refreshed token is the one sent. `fn` must be cheap; caching and refreshing are yours to do. `WithHeaderFunc(fn)` is the same contract for headers that rotate.
 
-Headers layer, lowest to highest: `WithHeader`, `WithHeaderFunc`, the call's own `Header(key, value)` (on a query, a pipe call or a SQL call; `SubscribeOptions.Header` for a stream), then the SDK's own (Authorization, Content-Type, Accept, User-Agent). A later layer replaces a key, case-insensitively, and never joins values.
+Headers layer, lowest to highest: `WithHeader`, `WithHeaderFunc`, the call's own `Header(key, value)` (on a query, a pipe call or a SQL call; `SubscribeOptions.Header` for a stream), then the SDK's own (Content-Type, Accept, User-Agent, and Authorization when a token or operator key is set; with neither, your own `Authorization` header is sent as given). A later layer replaces a key, case-insensitively, and never joins values.
 
 `RetryPolicy.AttemptTimeout` (off by default) gives each attempt its own deadline, so a stalled one is retried instead of holding the whole call. It covers a REST call, and each stream connect up to the response headers, but not an established stream. Your ctx still ends the call at once. A raw SQL or pipe call is not resent once its request headers were written, but an attempt that timed out while still connecting is.
 
@@ -93,7 +93,7 @@ To select over the stream together with other channels, range over `sub.Events()
 
 ## Documentation
 
-The SDK guides are on the WaveHouse docs site at [wavehouse.dev/sdk](https://wavehouse.dev/sdk). They cover the JavaScript SDK today; Go examples join them with this SDK's first release. Until then, the package's doc comments and `example_test.go` are the reference.
+The SDK guides are on the WaveHouse docs site at [wavehouse.dev/sdk](https://wavehouse.dev/sdk). The package's doc comments and `example_test.go` are the API reference.
 
 ## Contributing
 
