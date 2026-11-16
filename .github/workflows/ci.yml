@@ -6,6 +6,9 @@ on:
   pull_request:
   # The merge queue tests each entry against current main; without this trigger queued PRs hang.
   merge_group:
+  # Daily, so a newly published vulnerability turns main red without waiting for a PR.
+  schedule:
+    - cron: "17 6 * * *"
 
 permissions:
   contents: read
@@ -58,9 +61,23 @@ jobs:
         if: ${{ matrix.go == 'oldest' }}
         run: make test
 
+  vuln:
+    name: Vulnerabilities
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # The newest Go: users build with current releases, and a fixed stdlib vulnerability shouldn't stay red.
+          go-version: stable
+      - run: make vuln
+
   ci:
     name: CI
-    needs: [shared, lint, test]
+    needs: [shared, lint, test, vuln]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

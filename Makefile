@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := ci
 
-.PHONY: ci fix fmt vet lint test cover test-e2e shell
+.PHONY: ci fix fmt vet lint test cover test-e2e shell vuln
 
 OS   := $(shell go env GOOS)
 ARCH := $(shell go env GOARCH)
@@ -14,10 +14,13 @@ LINT_TOOLCHAIN := go1.26.6
 # gofumpt runs through `go run` so go.mod keeps no dependencies, not even tool ones.
 GOFUMPT := go run mvdan.cc/gofumpt@v0.9.2
 
+# Scans what the SDK reaches, standard library included, at the Go version running it.
+GOVULNCHECK := go run golang.org/x/vuln/cmd/govulncheck@v1.9.0
+
 # Total statement coverage must not fall below this percent. Measured 88.8% on import; floor is two points under.
 COVERAGE_FLOOR := 86
 
-ci: fmt vet lint cover shell ## Everything CI runs
+ci: fmt vet lint cover shell vuln ## Everything CI runs
 
 # The version is in the file name, so bumping it reinstalls.
 $(GOLANGCI_LINT):
@@ -42,6 +45,9 @@ cover: ## Race tests plus the coverage floor
 	go test -race -coverprofile=coverage.out ./...
 	@go tool cover -func=coverage.out | awk -v floor=$(COVERAGE_FLOOR) \
 		'/^total:/ { sub("%", "", $$3); printf "coverage %.1f%% (floor %d%%)\n", $$3, floor; if ($$3 + 0 < floor) exit 1 }'
+
+vuln: ## Known vulnerabilities in code the SDK calls
+	$(GOVULNCHECK) ./...
 
 shell: ## shellcheck every script, actionlint every workflow
 	git ls-files -z '*.sh' | xargs -0 -r shellcheck -x
