@@ -12,8 +12,20 @@ import (
 
 // SQLCall is one raw SQL statement. Get one from [Client.SQL].
 type SQLCall struct {
-	c     *Client
-	query string
+	c      *Client
+	query  string
+	tenant string
+}
+
+// ForTenant runs the statement against the ClickHouse of the tenant id, sent
+// as ?tenant=, in place of the default tenant "0"; it applies to Scan, Fetch
+// and Exec. An unknown id is [ErrNotFound], an empty id sends nothing. Unlike
+// the X-Tenant-ID header of the data routes, which this route ignores, it is
+// the only way to pick a tenant here. It returns a copy; s is unchanged.
+func (s *SQLCall) ForTenant(id string) *SQLCall {
+	n := *s
+	n.tenant = id
+	return &n
 }
 
 // SQL prepares a statement to run verbatim against ClickHouse, via
@@ -36,7 +48,7 @@ func (s *SQLCall) request() (*request, error) {
 	// The statement may mutate: only a request that never left is retried, and an APIError never is.
 	return &request{
 		kind: callSQL, method: http.MethodPost, path: "/v1/ops/query",
-		body: raw, contentType: "application/json",
+		body: raw, contentType: "application/json", query: tenantQuery([]AdminOption{ForTenant(s.tenant)}),
 	}, nil
 }
 

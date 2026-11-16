@@ -166,3 +166,35 @@ func TestTenantHeader(t *testing.T) {
 		require.NoError(t, c.Health(t.Context()))
 	})
 }
+
+// ForTenant is the admin routes' ?tenant=; they ignore the header.
+func TestForTenant(t *testing.T) {
+	c := newClient(t)
+	ctx := t.Context()
+	calls := map[string]func(wavehouse.AdminOption) error{
+		"Tables":         func(o wavehouse.AdminOption) error { _, err := c.Tables(ctx, o); return err },
+		"TableSchema":    func(o wavehouse.AdminOption) error { _, err := c.TableSchema(ctx, "e2e_events", o); return err },
+		"RefreshSchema":  func(o wavehouse.AdminOption) error { _, err := c.RefreshSchema(ctx, o); return err },
+		"DLQStats":       func(o wavehouse.AdminOption) error { _, err := c.DLQStats(ctx, o); return err },
+		"Pipes":          func(o wavehouse.AdminOption) error { _, err := c.Pipes(ctx, o); return err },
+		"PipeDefinition": func(o wavehouse.AdminOption) error { _, err := c.PipeDefinition(ctx, "e2e_count", o); return err },
+		"ReloadSettings": func(o wavehouse.AdminOption) error { _, err := c.ReloadSettings(ctx, o); return err },
+		"SQL":            func(o wavehouse.AdminOption) error { return c.SQL("SELECT 1").ForTenant("nope").Exec(ctx) },
+	}
+	for name, call := range calls {
+		t.Run(name+" unknown tenant", func(t *testing.T) {
+			require.ErrorIs(t, call(wavehouse.ForTenant("nope")), wavehouse.ErrNotFound)
+		})
+	}
+	for name, call := range calls {
+		if name == "SQL" || name == "DLQStats" { // DLQStats is a 404 for a tenant with no dead-letter queue
+			continue
+		}
+		t.Run(name+" default tenant 0", func(t *testing.T) {
+			require.NoError(t, call(wavehouse.ForTenant("0")))
+		})
+	}
+	t.Run("SQL default tenant 0", func(t *testing.T) {
+		require.NoError(t, c.SQL("SELECT 1").ForTenant("0").Exec(ctx))
+	})
+}

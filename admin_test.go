@@ -194,3 +194,82 @@ func TestReloadSettingsRejected(t *testing.T) {
 		assert.Error(t, err, status)
 	}
 }
+
+func TestAdminForTenant(t *testing.T) {
+	cases := []struct {
+		name, method, path, query string
+		call                      func(*Client, ...AdminOption) error
+	}{
+		{"Tables", "GET", "/v1/ops/schema", "", func(c *Client, o ...AdminOption) error { _, err := c.Tables(t.Context(), o...); return err }},
+		{"TableSchema", "GET", "/v1/ops/schema", "table=clicks", func(c *Client, o ...AdminOption) error {
+			_, err := c.TableSchema(t.Context(), "clicks", o...)
+			return err
+		}},
+		{"RefreshSchema", "POST", "/v1/ops/schema/refresh", "", func(c *Client, o ...AdminOption) error {
+			_, err := c.RefreshSchema(t.Context(), o...)
+			return err
+		}},
+		{"DLQStats", "GET", "/v1/ops/dlq/stats", "", func(c *Client, o ...AdminOption) error { _, err := c.DLQStats(t.Context(), o...); return err }},
+		{"ReloadSettings", "POST", "/v1/ops/settings/reload", "", func(c *Client, o ...AdminOption) error {
+			_, err := c.ReloadSettings(t.Context(), o...)
+			return err
+		}},
+		{"Pipes", "GET", "/v1/ops/pipes", "", func(c *Client, o ...AdminOption) error { _, err := c.Pipes(t.Context(), o...); return err }},
+		{"PipeDefinition", "GET", "/v1/ops/pipes/top_pages", "", func(c *Client, o ...AdminOption) error {
+			_, err := c.PipeDefinition(t.Context(), "top_pages", o...)
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := newRecorder(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"adopted":true,"tables":{},"name":"x","columns":[]}`))
+			})
+			c := rec.client(t, WithOperatorKey("k"), WithHeader("X-Tenant-ID", "hdr"))
+			// The responses decode loosely: only the request matters here.
+			_ = tc.call(c)
+			plain := rec.last(t)
+			assert.Equal(t, [3]string{tc.method, tc.path, tc.query}, [3]string{plain.method, plain.rawPath, plain.rawQuery})
+
+			_ = tc.call(c, ForTenant("acme"))
+			got := rec.last(t)
+			want := "tenant=acme"
+			if tc.query != "" {
+				want = tc.query + "&" + want
+			}
+			assert.Equal(t, [3]string{tc.method, tc.path, want}, [3]string{got.method, got.rawPath, got.rawQuery})
+			assert.Equal(t, "hdr", got.header.Get("X-Tenant-ID"), "the header stays the caller's")
+
+			_ = tc.call(c, ForTenant(""))
+			assert.Equal(t, plain.rawQuery, rec.last(t).rawQuery, "an empty id sends no parameter")
+
+			_ = tc.call(c, ForTenant("a"), ForTenant("b"), nil)
+			assert.Contains(t, rec.last(t).rawQuery, "tenant=b", "the last option wins")
+		})
+	}
+}
+
+func TestSQLForTenant(t *testing.T) {
+	rec := newRecorder(t, reply(200, `[]`))
+	c := rec.client(t, WithOperatorKey("k"))
+	base := c.SQL("SELECT 1")
+	scoped := base.ForTenant("acme")
+
+	require.NoError(t, scoped.Exec(t.Context()))
+	assert.Equal(t, "tenant=acme", rec.last(t).rawQuery)
+	_, err := scoped.Fetch(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, "tenant=acme", rec.last(t).rawQuery)
+	var rows []Row
+	require.NoError(t, scoped.Scan(t.Context(), &rows))
+	got := rec.last(t)
+	assert.Equal(t, "tenant=acme", got.rawQuery)
+	assert.JSONEq(t, `{"sql":"SELECT 1"}`, got.body)
+
+	// Copy-on-write: the original keeps the default tenant, and "" clears.
+	require.NoError(t, base.Exec(t.Context()))
+	assert.Empty(t, rec.last(t).rawQuery)
+	require.NoError(t, scoped.ForTenant("").Exec(t.Context()))
+	assert.Empty(t, rec.last(t).rawQuery)
+}

@@ -71,7 +71,8 @@ func WithHTTPClient(hc *http.Client) Option {
 // followed.
 //
 // A client of a multi-tenant server selects its tenant with
-// WithHeader("X-Tenant-ID", id); the SDK has no tenant handling of its own.
+// WithHeader("X-Tenant-ID", id). The admin routes ignore that header; pass
+// [ForTenant] to an admin call to address a tenant there.
 func WithHeader(key, value string) Option {
 	return func(o *options) {
 		if !validHeaderName(key) || strings.ContainsAny(value, "\r\n\x00") {

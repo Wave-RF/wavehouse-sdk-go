@@ -346,20 +346,17 @@
     "expected_path": "/v1/ops/schema", "expected_method": "GET", "expected_headers": {"X-Tenant-ID": "acme"}
   },
   {
-    "name": "js: tenant on schema list is a query parameter",
-    "sdks": ["js"],
+    "name": "tenant on schema list is a query parameter",
     "endpoint": "schema_list", "tenant": "acme",
     "expected_path": "/v1/ops/schema?tenant=acme", "expected_method": "GET", "expected_headers": {"X-Tenant-ID": ""}
   },
   {
-    "name": "js: tenant on schema table joins the table parameter",
-    "sdks": ["js"],
+    "name": "tenant on schema table joins the table parameter",
     "endpoint": "schema_table", "table": "events", "tenant": "acme",
     "expected_path": "/v1/ops/schema?table=events&tenant=acme", "expected_method": "GET", "expected_headers": {"X-Tenant-ID": ""}
   },
   {
-    "name": "js: tenant on raw SQL is a query parameter",
-    "sdks": ["js"],
+    "name": "tenant on raw SQL is a query parameter",
     "endpoint": "sql", "tenant": "acme", "sql": "SELECT 1",
     "expected_path": "/v1/ops/query?tenant=acme", "expected_method": "POST", "expected_headers": {"X-Tenant-ID": ""},
     "expected_body": {"sql": "SELECT 1"}

@@ -399,3 +399,21 @@ func ExampleClient_SQL() {
 	}
 	fmt.Println(out[0].N)
 }
+
+func ExampleForTenant() {
+	wh, err := wavehouse.New("http://localhost:8080", wavehouse.WithToken(os.Getenv("WAVEHOUSE_ADMIN_TOKEN")))
+	if err != nil {
+		log.Fatal(err)
+	}
+	ctx := context.Background()
+	// Admin routes ignore the X-Tenant-ID header; ForTenant sends ?tenant=acme.
+	tables, err := wh.Tables(ctx, wavehouse.ForTenant("acme"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(len(tables))
+	// Raw SQL is a chain, so the tenant is a method on it.
+	if err := wh.SQL("SELECT 1").ForTenant("acme").Exec(ctx); err != nil {
+		log.Fatal(err)
+	}
+}

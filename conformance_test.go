@@ -32,6 +32,7 @@ type wireCase struct {
 	PipeName   string            `json:"pipe_name"`
 	PipeParams map[string]any    `json:"pipe_params"`
 	SQL        string            `json:"sql"`
+	Tenant     string            `json:"tenant"` // the admin calls' ?tenant=, through ForTenant
 
 	ExpectedPath        string            `json:"expected_path"`
 	ExpectedMethod      string            `json:"expected_method"`
@@ -121,6 +122,7 @@ func TestConformanceWireFormat(t *testing.T) {
 func runWireCase(t *testing.T, c *Client, tc wireCase) error {
 	t.Helper()
 	ctx := t.Context()
+	ft := ForTenant(tc.Tenant)
 	switch tc.Endpoint {
 	case "query":
 		_, err := applyOps(t, c.From(tc.Table), tc.Operations).Fetch(ctx)
@@ -133,35 +135,35 @@ func runWireCase(t *testing.T, c *Client, tc wireCase) error {
 		_, err := c.Pipe(tc.PipeName).Params(tc.PipeParams).Fetch(ctx)
 		return err
 	case "sql":
-		_, err := c.SQL(tc.SQL).Fetch(ctx)
+		_, err := c.SQL(tc.SQL).ForTenant(tc.Tenant).Fetch(ctx)
 		return err
 	case "sql_exec":
-		return c.SQL(tc.SQL).Exec(ctx)
+		return c.SQL(tc.SQL).ForTenant(tc.Tenant).Exec(ctx)
 	case "health":
 		return c.Health(ctx)
 	case "version":
 		_, err := c.Version(ctx)
 		return err
 	case "schema_list":
-		_, err := c.Tables(ctx)
+		_, err := c.Tables(ctx, ft)
 		return err
 	case "schema_table":
-		_, err := c.TableSchema(ctx, tc.Table)
+		_, err := c.TableSchema(ctx, tc.Table, ft)
 		return err
 	case "schema_refresh":
-		_, err := c.RefreshSchema(ctx)
+		_, err := c.RefreshSchema(ctx, ft)
 		return err
 	case "dlq_list":
-		_, err := c.DLQStats(ctx)
+		_, err := c.DLQStats(ctx, ft)
 		return err
 	case "settings_reload":
-		_, err := c.ReloadSettings(ctx)
+		_, err := c.ReloadSettings(ctx, ft)
 		return err
 	case "pipes_list":
-		_, err := c.Pipes(ctx)
+		_, err := c.Pipes(ctx, ft)
 		return err
 	case "pipes_get":
-		_, err := c.PipeDefinition(ctx, tc.PipeName)
+		_, err := c.PipeDefinition(ctx, tc.PipeName, ft)
 		return err
 	}
 	// A hard failure, so a case nobody wired up can't hide drift between the SDKs.

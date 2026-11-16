@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Admin calls take a per-call tenant: `ForTenant(id)`, a trailing `AdminOption` on `Tables`, `TableSchema`, `RefreshSchema`, `DLQStats`, `ReloadSettings`, `Pipes` and `PipeDefinition`, and `SQLCall.ForTenant(id)` for raw SQL (a copy; it applies to `Scan`, `Fetch` and `Exec`). It sends `?tenant=<id>`, because the `/v1/ops/*` routes ignore the `X-Tenant-ID` header, which stays the caller's through `WithHeader`; an unknown tenant is `ErrNotFound` and an empty id sends nothing. The shared conformance cases for the three `?tenant=` calls now run in both SDKs. Mirrors the JS SDK's `tenant` option.
 - The SDK has no tenant handling of its own: sending `X-Tenant-ID` on a multi-tenant server is the caller's job, through `WithHeader("X-Tenant-ID", "acme")`. A header set that way, `X-Tenant-ID` included, is sent unchanged on every REST call and on the stream; the SDK owns only Authorization, Content-Type, Accept and User-Agent. The shared conformance cases gain an optional `"headers"` map (request headers set through the header hook).
 - `New` accepts a base URL with no scheme: it gets `http://` for a loopback host (`localhost`, `127.0.0.0/8`, `::1`, `*.localhost`) and `https://` for any other, and an explicit scheme is never changed. It used to return an error. The JS SDK resolves the same inputs to the same base.
 - The shared request-conformance cases gain an optional `"sdks"` list, and the Go replay skips cases that exclude Go. The JS SDK replays the same file.
