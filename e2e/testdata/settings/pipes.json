@@ -1,0 +1,13 @@
+{
+  "pipes": [
+    {
+      "name": "e2e_count",
+      "sql": "SELECT count() AS n FROM e2e_events WHERE name = {{name}}",
+      "parameters": [
+        { "name": "name", "type": "string", "required": true }
+      ],
+      "description": "Rows in e2e_events with a given name",
+      "allowed_roles": ["public"]
+    }
+  ]
+}
