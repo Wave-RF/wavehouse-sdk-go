@@ -152,14 +152,12 @@
   },
   {
     "name": "aggregate with no alias sends none",
-    "sdks": ["go"],
     "endpoint": "query", "table": "clicks", "operations": [{"method": "aggregate", "args": ["uniqExact", "user_id", ""]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
     "expected_body": {"aggregations": [{"fn": "uniqExact", "column": "user_id"}]}
   },
   {
     "name": "orderBy direction is lowercased",
-    "sdks": ["go"],
     "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "orderBy", "args": ["page", "DESC"]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
     "expected_body": {"columns": ["page"], "order_by": [{"column": "page", "dir": "desc"}]}
@@ -281,7 +279,6 @@
   },
   {
     "name": "version",
-    "sdks": ["go"],
     "endpoint": "version",
     "expected_path": "/version", "expected_method": "GET"
   },
@@ -322,28 +319,24 @@
   },
   {
     "name": "tenant on query is a header",
-    "sdks": ["go"],
     "endpoint": "query", "table": "clicks", "tenant": "acme", "operations": [],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_headers": {"X-Tenant-ID": "acme"},
     "expected_body": {"select_all": true}
   },
   {
     "name": "tenant on ingest is a header",
-    "sdks": ["go"],
     "endpoint": "ingest", "table": "clicks", "tenant": "acme", "operations": [{"method": "insert", "args": [{"page": "/a"}]}],
     "expected_path": "/v1/ingest?table=clicks", "expected_method": "POST", "expected_headers": {"X-Tenant-ID": "acme"},
     "expected_ndjson": [{"page": "/a"}]
   },
   {
     "name": "tenant on pipe is a header",
-    "sdks": ["go"],
     "endpoint": "pipe", "tenant": "acme", "pipe_name": "simple", "pipe_params": null,
     "expected_path": "/v1/pipes/simple", "expected_method": "POST", "expected_headers": {"X-Tenant-ID": "acme"},
     "expected_body": {}
   },
   {
     "name": "tenant on health is a header",
-    "sdks": ["go"],
     "endpoint": "health", "tenant": "acme",
     "expected_path": "/v1/health", "expected_method": "GET", "expected_headers": {"X-Tenant-ID": "acme"}
   },
@@ -392,8 +385,7 @@
     "expected_body": {"group_by": ["page", "button"], "limit": 1000, "aggregations": [{"fn": "count", "column": "*", "alias": "count"}]}
   },
   {
-    "name": "js: tenant on health sends no tenant",
-    "sdks": ["js"],
+    "name": "health without a tenant sends none",
     "endpoint": "health",
     "expected_path": "/v1/health", "expected_method": "GET", "expected_headers": {"X-Tenant-ID": ""}
   }
