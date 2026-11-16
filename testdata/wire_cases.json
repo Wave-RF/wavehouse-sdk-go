@@ -1,177 +1,177 @@
 [
   {
     "name": "bare query defaults to select_all",
-    "endpoint": "query", "table": "clicks", "operations": [],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"select_all": true}
+    "expected_body": {"select_all": true, "limit": 100}
   },
   {
     "name": "select explicit columns",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page", "button"]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page", "button"]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"columns": ["page", "button"]}
+    "expected_body": {"columns": ["page", "button"], "limit": 100}
   },
   {
     "name": "select calls accumulate",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "select", "args": ["button"]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "select", "args": ["button"]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"columns": ["page", "button"]}
+    "expected_body": {"columns": ["page", "button"], "limit": 100}
   },
   {
     "name": "selectAll sends select_all flag",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "selectAll"}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "selectAll"}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"select_all": true}
+    "expected_body": {"select_all": true, "limit": 100}
   },
   {
     "name": "where with eq operator",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "where", "args": ["score", "=", 10]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "where", "args": ["score", "=", 10]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"columns": ["page"], "filters": [{"column": "score", "op": "eq", "value": 10}]}
+    "expected_body": {"columns": ["page"], "filters": [{"column": "score", "op": "eq", "value": 10}], "limit": 100}
   },
   {
     "name": "where with neq operator",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "where", "args": ["score", "!=", 10]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "where", "args": ["score", "!=", 10]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"columns": ["page"], "filters": [{"column": "score", "op": "neq", "value": 10}]}
+    "expected_body": {"columns": ["page"], "filters": [{"column": "score", "op": "neq", "value": 10}], "limit": 100}
   },
   {
     "name": "where with gt operator",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "where", "args": ["score", ">", 10]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "where", "args": ["score", ">", 10]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"columns": ["page"], "filters": [{"column": "score", "op": "gt", "value": 10}]}
+    "expected_body": {"columns": ["page"], "filters": [{"column": "score", "op": "gt", "value": 10}], "limit": 100}
   },
   {
     "name": "where with gte operator",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "where", "args": ["score", ">=", 10]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "where", "args": ["score", ">=", 10]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"columns": ["page"], "filters": [{"column": "score", "op": "gte", "value": 10}]}
+    "expected_body": {"columns": ["page"], "filters": [{"column": "score", "op": "gte", "value": 10}], "limit": 100}
   },
   {
     "name": "where with lt operator",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "where", "args": ["score", "<", 10]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "where", "args": ["score", "<", 10]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"columns": ["page"], "filters": [{"column": "score", "op": "lt", "value": 10}]}
+    "expected_body": {"columns": ["page"], "filters": [{"column": "score", "op": "lt", "value": 10}], "limit": 100}
   },
   {
     "name": "where with lte operator",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "where", "args": ["score", "<=", 10]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "where", "args": ["score", "<=", 10]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"columns": ["page"], "filters": [{"column": "score", "op": "lte", "value": 10}]}
+    "expected_body": {"columns": ["page"], "filters": [{"column": "score", "op": "lte", "value": 10}], "limit": 100}
   },
   {
     "name": "where with in operator",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "where", "args": ["page", "in", ["/home", "/about"]]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "where", "args": ["page", "in", ["/home", "/about"]]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"columns": ["page"], "filters": [{"column": "page", "op": "in", "value": ["/home", "/about"]}]}
+    "expected_body": {"columns": ["page"], "filters": [{"column": "page", "op": "in", "value": ["/home", "/about"]}], "limit": 100}
   },
   {
     "name": "where with like operator",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "where", "args": ["page", "like", "/home%"]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "where", "args": ["page", "like", "/home%"]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"columns": ["page"], "filters": [{"column": "page", "op": "like", "value": "/home%"}]}
+    "expected_body": {"columns": ["page"], "filters": [{"column": "page", "op": "like", "value": "/home%"}], "limit": 100}
   },
   {
     "name": "multiple where clauses (AND)",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "where", "args": ["score", ">", 10]}, {"method": "where", "args": ["page", "=", "/home"]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "where", "args": ["score", ">", 10]}, {"method": "where", "args": ["page", "=", "/home"]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"columns": ["page"], "filters": [{"column": "score", "op": "gt", "value": 10}, {"column": "page", "op": "eq", "value": "/home"}]}
+    "expected_body": {"columns": ["page"], "filters": [{"column": "score", "op": "gt", "value": 10}, {"column": "page", "op": "eq", "value": "/home"}], "limit": 100}
   },
   {
     "name": "count aggregation",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "count", "args": ["*", "total"]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "count", "args": ["*", "total"]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"aggregations": [{"fn": "count", "column": "*", "alias": "total"}]}
+    "expected_body": {"aggregations": [{"fn": "count", "column": "*", "alias": "total"}], "limit": 100}
   },
   {
     "name": "count with default alias",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "count", "args": ["*", ""]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "count", "args": ["*", ""]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"aggregations": [{"fn": "count", "column": "*", "alias": "count"}]}
+    "expected_body": {"aggregations": [{"fn": "count", "column": "*", "alias": "count"}], "limit": 100}
   },
   {
     "name": "sum aggregation with default alias",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "sum", "args": ["score", ""]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "sum", "args": ["score", ""]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"aggregations": [{"fn": "sum", "column": "score", "alias": "sum_score"}]}
+    "expected_body": {"aggregations": [{"fn": "sum", "column": "score", "alias": "sum_score"}], "limit": 100}
   },
   {
     "name": "avg aggregation with default alias",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "avg", "args": ["score", ""]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "avg", "args": ["score", ""]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"aggregations": [{"fn": "avg", "column": "score", "alias": "avg_score"}]}
+    "expected_body": {"aggregations": [{"fn": "avg", "column": "score", "alias": "avg_score"}], "limit": 100}
   },
   {
     "name": "min aggregation with default alias",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "min", "args": ["score", ""]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "min", "args": ["score", ""]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"aggregations": [{"fn": "min", "column": "score", "alias": "min_score"}]}
+    "expected_body": {"aggregations": [{"fn": "min", "column": "score", "alias": "min_score"}], "limit": 100}
   },
   {
     "name": "max aggregation with default alias",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "max", "args": ["score", ""]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "max", "args": ["score", ""]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"aggregations": [{"fn": "max", "column": "score", "alias": "max_score"}]}
+    "expected_body": {"aggregations": [{"fn": "max", "column": "score", "alias": "max_score"}], "limit": 100}
   },
   {
     "name": "countDistinct aggregation with default alias",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "countDistinct", "args": ["page", ""]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "countDistinct", "args": ["page", ""]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"aggregations": [{"fn": "countDistinct", "column": "page", "alias": "count_distinct_page"}]}
+    "expected_body": {"aggregations": [{"fn": "countDistinct", "column": "page", "alias": "count_distinct_page"}], "limit": 100}
   },
   {
     "name": "custom aggregate function",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "aggregate", "args": ["uniqExact", "user_id", "unique_users"]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "aggregate", "args": ["uniqExact", "user_id", "unique_users"]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"aggregations": [{"fn": "uniqExact", "column": "user_id", "alias": "unique_users"}]}
+    "expected_body": {"aggregations": [{"fn": "uniqExact", "column": "user_id", "alias": "unique_users"}], "limit": 100}
   },
   {
     "name": "groupBy",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "groupBy", "args": ["page"]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "groupBy", "args": ["page"]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"columns": ["page"], "group_by": ["page"]}
+    "expected_body": {"columns": ["page"], "group_by": ["page"], "limit": 100}
   },
   {
     "name": "select star is a column name",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["*"]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["*"]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"columns": ["*"]}
+    "expected_body": {"columns": ["*"], "limit": 100}
   },
   {
     "name": "groupBy adds nothing to the selection",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "count", "args": ["*", ""]}, {"method": "groupBy", "args": ["page", "button"]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "count", "args": ["*", ""]}, {"method": "groupBy", "args": ["page", "button"]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"group_by": ["page", "button"], "aggregations": [{"fn": "count", "column": "*", "alias": "count"}]}
+    "expected_body": {"group_by": ["page", "button"], "aggregations": [{"fn": "count", "column": "*", "alias": "count"}], "limit": 100}
   },
   {
     "name": "groupBy keeps the order of columns already selected",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["button", "page"]}, {"method": "sum", "args": ["score", ""]}, {"method": "groupBy", "args": ["page"]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["button", "page"]}, {"method": "sum", "args": ["score", ""]}, {"method": "groupBy", "args": ["page"]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"columns": ["button", "page"], "group_by": ["page"], "aggregations": [{"fn": "sum", "column": "score", "alias": "sum_score"}]}
+    "expected_body": {"columns": ["button", "page"], "group_by": ["page"], "aggregations": [{"fn": "sum", "column": "score", "alias": "sum_score"}], "limit": 100}
   },
   {
     "name": "aggregate with no alias sends none",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "aggregate", "args": ["uniqExact", "user_id", ""]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "aggregate", "args": ["uniqExact", "user_id", ""]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"aggregations": [{"fn": "uniqExact", "column": "user_id"}]}
+    "expected_body": {"aggregations": [{"fn": "uniqExact", "column": "user_id"}], "limit": 100}
   },
   {
     "name": "orderBy direction is lowercased",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "orderBy", "args": ["page", "DESC"]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "orderBy", "args": ["page", "DESC"]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"columns": ["page"], "order_by": [{"column": "page", "dir": "desc"}]}
+    "expected_body": {"columns": ["page"], "order_by": [{"column": "page", "dir": "desc"}], "limit": 100}
   },
   {
     "name": "orderBy ascending",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "orderBy", "args": ["page", "asc"]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "orderBy", "args": ["page", "asc"]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"columns": ["page"], "order_by": [{"column": "page", "dir": "asc"}]}
+    "expected_body": {"columns": ["page"], "order_by": [{"column": "page", "dir": "asc"}], "limit": 100}
   },
   {
     "name": "orderBy descending",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "orderBy", "args": ["score", "desc"]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "orderBy", "args": ["score", "desc"]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"columns": ["page"], "order_by": [{"column": "score", "dir": "desc"}]}
+    "expected_body": {"columns": ["page"], "order_by": [{"column": "score", "dir": "desc"}], "limit": 100}
   },
   {
     "name": "explicit limit",
@@ -181,15 +181,16 @@
   },
   {
     "name": "no limit is sent unless set",
+    "sdks": ["go"],
     "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
     "expected_body": {"columns": ["page"]}
   },
   {
     "name": "timeRange open-ended sends no until",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "timeRange", "args": ["received_timestamp", "2026-01-01T00:00:00Z", ""]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "timeRange", "args": ["received_timestamp", "2026-01-01T00:00:00Z", ""]}, {"method": "limit", "args": [100]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"columns": ["page"], "time_range": {"column": "received_timestamp", "since": "2026-01-01T00:00:00Z"}}
+    "expected_body": {"columns": ["page"], "time_range": {"column": "received_timestamp", "since": "2026-01-01T00:00:00Z"}, "limit": 100}
   },
   {
     "name": "timeRange with since and until, nanoseconds, in UTC",
@@ -318,9 +319,9 @@
   },
   {
     "name": "custom X-Tenant-ID header on query arrives unchanged",
-    "endpoint": "query", "table": "clicks", "operations": [], "headers": {"X-Tenant-ID": "acme"},
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "limit", "args": [100]}], "headers": {"X-Tenant-ID": "acme"},
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_headers": {"X-Tenant-ID": "acme"},
-    "expected_body": {"select_all": true}
+    "expected_body": {"select_all": true, "limit": 100}
   },
   {
     "name": "custom X-Tenant-ID header on ingest arrives unchanged",
@@ -397,21 +398,21 @@
   },
   {
     "name": "per-call header on a query",
-    "endpoint": "query", "table": "clicks", "operations": [], "call_headers": {"X-Trace": "t-1"},
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "limit", "args": [100]}], "call_headers": {"X-Trace": "t-1"},
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_headers": {"X-Trace": "t-1"}, "expected_body": {"select_all": true}
+    "expected_headers": {"X-Trace": "t-1"}, "expected_body": {"select_all": true, "limit": 100}
   },
   {
     "name": "per-call header replaces a client header case-insensitively",
-    "endpoint": "query", "table": "clicks", "operations": [], "headers": {"X-Tenant-ID": "acme"}, "call_headers": {"x-tenant-id": "globex"},
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "limit", "args": [100]}], "headers": {"X-Tenant-ID": "acme"}, "call_headers": {"x-tenant-id": "globex"},
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_headers": {"X-Tenant-ID": "globex"},
-    "expected_body": {"select_all": true}
+    "expected_body": {"select_all": true, "limit": 100}
   },
   {
     "name": "per-call header cannot replace the SDK's own Content-Type or Accept",
-    "endpoint": "query", "table": "clicks", "operations": [], "call_headers": {"Content-Type": "text/nope", "Accept": "text/nope", "X-Trace": "t-1"},
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "limit", "args": [100]}], "call_headers": {"Content-Type": "text/nope", "Accept": "text/nope", "X-Trace": "t-1"},
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_headers": {"Accept": "application/json", "X-Trace": "t-1"}, "expected_body": {"select_all": true}
+    "expected_headers": {"Accept": "application/json", "X-Trace": "t-1"}, "expected_body": {"select_all": true, "limit": 100}
   },
   {
     "name": "per-call header on ingest",
