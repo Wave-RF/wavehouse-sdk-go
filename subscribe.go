@@ -134,8 +134,9 @@ func (e Event) Decode(dst any) error {
 //	}
 //	if err := sub.Err(); err != nil { ... }
 //
-// Next and Event belong to one goroutine; Close and Err may be called from
-// any. A Subscription reconnects on its own and keeps doing so until it is
+// Or range over [Subscription.Events]. Use Next and Event, or Events, not
+// both. Next and Event belong to one goroutine; Close and Err may be called
+// from any. A Subscription reconnects on its own and keeps doing so until it is
 // closed, its ctx is done, or the server refuses it for good. Its goroutine
 // and connection last until then, so always Close it.
 type Subscription struct {
@@ -167,6 +168,11 @@ type Subscription struct {
 
 // Subscribe streams the rows ingested into table, over GET /v1/stream
 // (server-sent events), with the client's tenant as X-Tenant-ID.
+//
+// An unknown or misspelled table is not an error: the server accepts the
+// stream and matches no events, so the subscription stays live and silent. To
+// catch a typo, check the table first, with [Client.TableSchema] (admin) or a
+// [Client.From] query with Limit(1), before subscribing.
 //
 // ctx bounds the whole subscription, not only the connect: cancelling it ends
 // the stream as Close does. Subscribe returns once the server has answered
@@ -254,6 +260,19 @@ func (s *Subscription) Next() bool {
 
 // Event returns the event the last successful Next read.
 func (s *Subscription) Event() Event { return s.cur }
+
+// Events returns the subscription's events as a channel, for a consumer that
+// selects over several sources. The channel is closed when the subscription
+// ends, whether by Close, the ctx being done or a terminal error; then call
+// [Subscription.Err] to tell them apart. After Close, events already buffered
+// may still be read before the close.
+//
+// It is the same stream Next reads, not a copy: use Next and Event, or
+// Events, not both on one Subscription. There is no goroutine behind it, so a
+// consumer that stops reading leaks nothing; the SDK just stops reading the
+// connection (see [Client.Subscribe] on a slow consumer) until Close or the
+// ctx ends it. Always Close the Subscription.
+func (s *Subscription) Events() <-chan Event { return s.events }
 
 // Err returns the error that ended the subscription, or nil while it runs and
 // after it was closed or its ctx was done.

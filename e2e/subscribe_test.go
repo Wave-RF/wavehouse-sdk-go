@@ -242,3 +242,56 @@ func TestSubscribeReconnectBeforeAnyEvent(t *testing.T) {
 	got := collect(t, events, name, 1)
 	assert.Equal(t, json.Number("7"), got[0].Values[2])
 }
+
+func TestSubscribeEvents(t *testing.T) {
+	sub := subscribe(t, newClient(t), nil)
+	events := sub.Events()
+
+	// Warm up as TestSubscribeLive does, then check a named row through the channel.
+	warm := uniqueName(t) + "-warm"
+	for tries := 0; ; tries++ {
+		require.Less(t, tries, 40, "no warm-up row arrived")
+		ingest(t, eventRow(warm, 0))
+		select {
+		case ev := <-events:
+			if ev.Row()["name"] != warm {
+				continue
+			}
+		case <-time.After(250 * time.Millisecond):
+			continue
+		}
+		break
+	}
+	name := uniqueName(t)
+	ingest(t, eventRow(name, 3))
+	got := collect(t, events, name, 1)
+	v, err := got[0].Row().Float64("value")
+	require.NoError(t, err)
+	assert.InDelta(t, 3, v, 0)
+
+	require.NoError(t, sub.Close())
+	require.Eventually(t, func() bool {
+		select {
+		case _, ok := <-events:
+			return !ok
+		default:
+			return false
+		}
+	}, 5*time.Second, 10*time.Millisecond, "Events was not closed by Close")
+	require.NoError(t, sub.Err())
+}
+
+// A table the server doesn't have is no error: the stream is accepted and stays quiet.
+func TestSubscribeUnknownTable(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	sub, err := newClient(t).Subscribe(ctx, "no_such_table", nil)
+	require.NoError(t, err)
+	select {
+	case ev := <-sub.Events():
+		require.FailNowf(t, "unexpected event", "%v", ev)
+	case <-time.After(time.Second):
+	}
+	require.NoError(t, sub.Close())
+	require.NoError(t, sub.Err())
+}

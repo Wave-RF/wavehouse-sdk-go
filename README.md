@@ -65,7 +65,7 @@ The same client runs pipes (`wh.Pipe("top_pages").Param("limit", 10).Scan(ctx, &
 
 ## Streaming
 
-`Subscribe` streams the rows ingested into a table, reconnecting and resuming on its own until you close it:
+`Subscribe` streams the rows ingested into a table, reconnecting and resuming on its own until you close it. A table the server doesn't know is not an error, only a stream that never delivers, so check the name first (`wh.TableSchema`, or a `Limit(1)` query):
 
 ```go
 sub, err := wh.Subscribe(ctx, "clicks", nil)
@@ -80,6 +80,8 @@ if err := sub.Err(); err != nil {
     log.Fatal(err)
 }
 ```
+
+To select over the stream together with other channels, range over `sub.Events()` instead of calling `Next`; the channel closes when the subscription ends, and then `sub.Err()` says why. Use one or the other.
 
 ## Documentation
 

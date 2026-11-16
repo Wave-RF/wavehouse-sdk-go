@@ -23,6 +23,9 @@ func ExampleClient_Subscribe() {
 	sub, err := wh.Subscribe(ctx, "clicks", &wavehouse.SubscribeOptions{
 		Since: time.Now().Add(-time.Hour), // replay the last hour first
 	})
+	// ErrNotFound here is an unknown tenant. An unknown table is no error: the
+	// subscription stays live and empty, so check the table first with
+	// TableSchema or a Limit(1) query.
 	if errors.Is(err, wavehouse.ErrNotFound) {
 		log.Fatal("no such tenant")
 	} else if err != nil {
@@ -39,6 +42,39 @@ func ExampleClient_Subscribe() {
 	stop()
 	if err != nil {
 		log.Fatal(err)
+	}
+}
+
+// Events is the channel form of Next, for a loop that also waits on other sources.
+func ExampleSubscription_Events() {
+	wh, err := wavehouse.New("http://localhost:8080")
+	if err != nil {
+		log.Fatal(err)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	sub, err := wh.Subscribe(ctx, "clicks", nil)
+	if err != nil {
+		stop()
+		log.Fatal(err)
+	}
+	defer func() { _ = sub.Close(); stop() }()
+
+	tick := time.NewTicker(time.Minute)
+	defer func() { tick.Stop() }()
+	for events := sub.Events(); ; {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				// Closed: the ctx was cancelled, Close was called, or the stream ended for good.
+				if err := sub.Err(); err != nil {
+					log.Print(err)
+				}
+				return
+			}
+			fmt.Println(ev.Row())
+		case <-tick.C:
+			fmt.Println("still listening")
+		}
 	}
 }
 

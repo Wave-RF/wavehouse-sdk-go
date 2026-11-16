@@ -885,3 +885,125 @@ func TestSubscribeTokenSourceRetriedAfterLive(t *testing.T) {
 		assert.Equal(t, int32(4), calls.Load())
 	})
 }
+
+// A fake stream that delivers rows 1 and 2 and stays open.
+func twoRows(_ int, r *http.Request) (*http.Response, error) {
+	return sseOpen(r, schemaFrame("a"), rowFrame(1, 1), rowFrame(2, 2)), nil
+}
+
+func TestSubscriptionEvents(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c, _ := newFakeStream(t, twoRows)
+		sub, err := c.Subscribe(t.Context(), "t", nil)
+		require.NoError(t, err)
+		events := sub.Events()
+		assert.Equal(t, ts(1), (<-events).ID)
+		ev := <-events
+		assert.Equal(t, ts(2), ev.ID)
+		assert.Equal(t, Row{"a": json.Number("2")}, ev.Row())
+		require.NoError(t, sub.Close())
+		_, ok := <-events
+		assert.False(t, ok, "closed once the subscription ended")
+		require.NoError(t, sub.Err())
+	})
+}
+
+func TestSubscriptionEventsClosesOnEnd(t *testing.T) {
+	cases := map[string]func(t *testing.T, sub *Subscription, cancel context.CancelFunc) (wantErr error){
+		"Close": func(t *testing.T, sub *Subscription, _ context.CancelFunc) error {
+			require.NoError(t, sub.Close())
+			return nil
+		},
+		"ctx cancel": func(_ *testing.T, _ *Subscription, cancel context.CancelFunc) error {
+			cancel()
+			return nil
+		},
+		"terminal error": func(t *testing.T, sub *Subscription, _ context.CancelFunc) error {
+			// The stream is open until the server drops it and then refuses the reconnect for good.
+			return ErrForbidden
+		},
+	}
+	for name, stop := range cases {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				c, _ := newFakeStream(t, func(n int, r *http.Request) (*http.Response, error) {
+					if n == 1 {
+						return sseEnds(r, schemaFrame("a"), rowFrame(1, 1)), nil
+					}
+					if name == "terminal error" {
+						return fakeResponse(r, 403, `{"error":"no"}`, "Content-Type", "application/json"), nil
+					}
+					return sseOpen(r, schemaFrame("a"), rowFrame(2, 2)), nil
+				}, WithRetry(RetryPolicy{MinBackoff: time.Second, MaxBackoff: time.Second}))
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				sub, err := c.Subscribe(ctx, "t", nil)
+				require.NoError(t, err)
+				want := stop(t, sub, cancel)
+				for ev := range sub.Events() { // drains whatever is buffered, then ends
+					assert.NotEmpty(t, ev.ID)
+				}
+				if want != nil {
+					require.ErrorIs(t, sub.Err(), want)
+				} else {
+					require.NoError(t, sub.Err())
+				}
+				require.NoError(t, sub.Close())
+			})
+		})
+	}
+}
+
+// A consumer that reads a little and walks away, with the server still
+// sending: Close ends the reader, and nothing is left running.
+func TestSubscriptionEventsAbandoned(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c, _ := newFakeStream(t, func(_ int, r *http.Request) (*http.Response, error) {
+			pr, pw := io.Pipe()
+			go func() {
+				if _, err := io.WriteString(pw, schemaFrame("a")); err != nil {
+					return
+				}
+				for i := range 1000 {
+					if _, err := io.WriteString(pw, rowFrame(i%60, i)); err != nil {
+						return
+					}
+				}
+			}()
+			return sseWith(r, pr), nil
+		})
+		sub, err := c.Subscribe(t.Context(), "t", nil)
+		require.NoError(t, err)
+		<-sub.Events()
+		synctest.Wait() // the reader is now blocked, the buffer full
+		require.NoError(t, sub.Close())
+		// synctest.Test fails if a goroutine of the bubble is still blocked when it returns.
+	})
+}
+
+func TestSubscriptionEventsNoLeak(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, schemaFrame("a"))
+		w.(http.Flusher).Flush()
+		for i := 0; r.Context().Err() == nil && i < 100_000; i++ {
+			_, _ = io.WriteString(w, rowFrame(i%60, i))
+			w.(http.Flusher).Flush()
+		}
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	c, err := New(srv.URL, WithHTTPClient(&http.Client{Transport: &http.Transport{}}))
+	require.NoError(t, err)
+
+	sub, err := c.Subscribe(t.Context(), "t", nil)
+	require.NoError(t, err)
+	<-sub.Events() // then stop reading, with the server still sending
+	require.NoError(t, sub.Close())
+	_, open := <-sub.Events()
+	for open {
+		_, open = <-sub.Events()
+	}
+}
