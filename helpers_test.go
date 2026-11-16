@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"strings"
 	"sync"
 	"testing"
@@ -105,4 +106,15 @@ func fakeClient(t *testing.T, rt roundTripFunc, opts ...Option) *Client {
 	c, err := New("http://wavehouse.test", append([]Option{WithHTTPClient(&http.Client{Transport: rt})}, opts...)...)
 	require.NoError(t, err)
 	return c
+}
+
+// afterSend fails r the way a real transport does once the request is on the
+// wire: it fires the httptrace hook a real http.Transport fires after writing
+// the headers, then returns err. A fake that returns an error without this is
+// a request that never left.
+func afterSend(r *http.Request, err error) (*http.Response, error) {
+	if tr := httptrace.ContextClientTrace(r.Context()); tr != nil && tr.WroteHeaders != nil {
+		tr.WroteHeaders()
+	}
+	return nil, err
 }

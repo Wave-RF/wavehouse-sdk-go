@@ -87,7 +87,7 @@ func TestSQLRetryClasses(t *testing.T) {
 		fail     func(*http.Request) (*http.Response, error)
 		attempts int
 	}{
-		"transport error after send": {func(*http.Request) (*http.Response, error) { return nil, errReset }, 1},
+		"transport error after send": {func(r *http.Request) (*http.Response, error) { return afterSend(r, errReset) }, 1},
 		"dial error":                 {func(*http.Request) (*http.Response, error) { return nil, errDial }, 2},
 		"retryable APIError": {func(r *http.Request) (*http.Response, error) {
 			return fakeResponse(r, 503, `{"error":"x","code":"clickhouse.unavailable","retryable":true}`, "Retry-After", "5"), nil

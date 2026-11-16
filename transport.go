@@ -11,10 +11,12 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -131,7 +133,8 @@ func (c *Client) attempt(ctx context.Context, r *request) (*response, error) {
 	if res.StatusCode/100 == 2 {
 		body, err := io.ReadAll(res.Body)
 		if err != nil {
-			return nil, c.transportError(ctx, actx, r, err)
+			// The response is in, so the request certainly reached the server.
+			return nil, c.transportError(ctx, actx, r, err, true)
 		}
 		return &response{status: res.StatusCode, header: res.Header, body: body}, nil
 	}
@@ -151,6 +154,10 @@ func (c *Client) send(ctx, actx context.Context, r *request) (*http.Response, er
 	if r.body != nil {
 		body = bytes.NewReader(r.body)
 	}
+	// wrote is set once the request headers are written to the connection: from
+	// then on the server may have acted, so a call that may write is not resent.
+	var wrote atomic.Bool
+	actx = httptrace.WithClientTrace(actx, &httptrace.ClientTrace{WroteHeaders: func() { wrote.Store(true) }})
 	req, err := http.NewRequestWithContext(actx, r.method, c.url(r), body)
 	if err != nil {
 		return nil, fmt.Errorf("wavehouse: %s %s: %w", r.method, r.path, err)
@@ -202,7 +209,7 @@ func (c *Client) send(ctx, actx context.Context, r *request) (*http.Response, er
 	}
 	res, err := hc.Do(req)
 	if err != nil {
-		return nil, c.transportError(ctx, actx, r, err)
+		return nil, c.transportError(ctx, actx, r, err, wrote.Load())
 	}
 	if credentialed && res.StatusCode/100 == 3 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, maxErrorBody))
@@ -274,13 +281,14 @@ func (c *Client) authorization(ctx context.Context) (string, error) {
 // transportError classifies a failed exchange. ctx is the caller's, actx the
 // attempt's. An attempt that hit its own deadline while the caller's ctx is
 // live is retryable like any transport error, with the same rule for calls
-// that may write: only a dial that never connected is safe to resend. Its
+// that may write: only a request that never left (no headers written, as
+// httptrace reports, or a failed dial) is safe to resend. Its
 // cause is flattened to text, so it doesn't match context.DeadlineExceeded,
 // which is the caller's own deadline.
-func (c *Client) transportError(ctx, actx context.Context, r *request, err error) error {
+func (c *Client) transportError(ctx, actx context.Context, r *request, err error, sent bool) error {
 	retryable := ctx.Err() == nil
 	if r.kind == callPipe || r.kind == callSQL {
-		retryable = retryable && isDialError(err)
+		retryable = retryable && (!sent || isDialError(err))
 	}
 	re := &requestError{method: r.method, path: r.path, err: err, retryable: retryable}
 	if ctx.Err() == nil && errors.Is(context.Cause(actx), ErrAttemptTimeout) {

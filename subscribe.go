@@ -492,7 +492,7 @@ func (s *Subscription) connect() (*http.Response, error) {
 	if timer != nil && !timer.Stop() {
 		// The deadline fired as the headers arrived, so the body is cancelled too.
 		_ = res.Body.Close()
-		return nil, s.c.transportError(s.ctx, actx, r, context.Cause(actx))
+		return nil, s.c.transportError(s.ctx, actx, r, context.Cause(actx), true)
 	}
 	// The body lives under actx; releasing it with the body frees the context.
 	res.Body = &releaseBody{ReadCloser: res.Body, release: func() { cancel(nil) }}

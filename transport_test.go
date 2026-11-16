@@ -111,7 +111,7 @@ func TestRetryClassification(t *testing.T) {
 	}
 	failures := map[string]roundTripFunc{
 		"dial error":          func(*http.Request) (*http.Response, error) { return nil, errDial },
-		"transport error":     func(*http.Request) (*http.Response, error) { return nil, errReset },
+		"transport error":     func(r *http.Request) (*http.Response, error) { return afterSend(r, errReset) },
 		"plain 503":           respond(503, `{"error":"x"}`),
 		"503 server says no":  respond(503, `{"error":"x","retryable":false}`),
 		"plain 400":           respond(400, `{"error":"x"}`),

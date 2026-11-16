@@ -3,7 +3,9 @@ package wavehouse
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -128,44 +130,98 @@ func TestCallerDeadlineDuringAttemptIsNotAnAttemptTimeout(t *testing.T) {
 	})
 }
 
-// A timeout after the request may have left is never resent for a call that
-// may write; one that never connected is.
-func TestAttemptTimeoutRespectsSendSafety(t *testing.T) {
-	stallDial := func(r *http.Request) (*http.Response, error) {
-		<-r.Context().Done()
-		return nil, errDial
+// listenTCP returns a listener and its base URL, closed with the test.
+func listenTCP(t *testing.T) (net.Listener, string) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+	return ln, "http://" + ln.Addr().String()
+}
+
+// slowDialClient dials through a dialer that never connects until the attempt
+// ends, as a blackholed address does, so the code under test sees what a real
+// http.Transport returns for a dial cut short by the attempt's deadline.
+func slowDialClient(t *testing.T, base string, dials *atomic.Int32) *Client {
+	t.Helper()
+	tr := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		dials.Add(1)
+		<-ctx.Done()
+		return nil, context.Cause(ctx)
+	}}
+	t.Cleanup(tr.CloseIdleConnections)
+	c, err := New(base, WithHTTPClient(&http.Client{Transport: tr}),
+		WithRetry(RetryPolicy{MaxAttempts: 3, AttemptTimeout: 30 * time.Millisecond, MinBackoff: time.Millisecond}))
+	require.NoError(t, err)
+	return c
+}
+
+// An attempt that times out while still connecting never sent anything, so a
+// pipe or SQL call is resent.
+func TestAttemptTimeoutWhileConnectingIsResent(t *testing.T) {
+	calls := map[string]func(context.Context, *Client) error{
+		"sql":  func(ctx context.Context, c *Client) error { return c.SQL("DROP TABLE x").Exec(ctx) },
+		"pipe": func(ctx context.Context, c *Client) error { return c.Pipe("p").Exec(ctx) },
 	}
-	cases := map[string]struct {
-		call     func(context.Context, *Client) error
-		rt       roundTripFunc
-		attempts int32
-	}{
-		"sql after send": {func(ctx context.Context, c *Client) error { return c.SQL("DROP TABLE x").Exec(ctx) }, stall, 1},
-		"sql dial":       {func(ctx context.Context, c *Client) error { return c.SQL("DROP TABLE x").Exec(ctx) }, stallDial, 3},
-		"pipe after send": {func(ctx context.Context, c *Client) error {
-			return c.Pipe("p").Exec(ctx)
-		}, stall, 1},
-		"pipe dial": {func(ctx context.Context, c *Client) error { return c.Pipe("p").Exec(ctx) }, stallDial, 3},
-		"insert after send": {func(ctx context.Context, c *Client) error {
-			_, err := c.From("t").Insert(ctx, map[string]int{"a": 1})
-			return err
-		}, stall, 3},
-	}
-	for name, tc := range cases {
+	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				var calls atomic.Int32
-				c := fakeClient(t, func(r *http.Request) (*http.Response, error) {
-					calls.Add(1)
-					return tc.rt(r)
-				}, WithRetry(RetryPolicy{AttemptTimeout: time.Second, MinBackoff: time.Millisecond}))
-				err := tc.call(t.Context(), c)
-				require.ErrorIs(t, err, ErrAttemptTimeout)
-				assert.Equal(t, tc.attempts, calls.Load())
-				assert.Contains(t, err.Error(), "attempt(s)")
-			})
+			var dials atomic.Int32
+			c := slowDialClient(t, "http://203.0.113.1:9", &dials)
+			err := call(t.Context(), c)
+			require.ErrorIs(t, err, ErrAttemptTimeout)
+			assert.Equal(t, int32(3), dials.Load())
+			assert.Contains(t, err.Error(), "after 3 attempt(s)")
 		})
 	}
+}
+
+// A listener that never accepts: the kernel completes the handshake, so the
+// request is written into the socket buffer; that is "sent".
+// A server that reads the headers and stalls must not see SQL or a pipe again.
+func TestAttemptTimeoutAfterTheServerReadTheRequestIsNotResent(t *testing.T) {
+	calls := map[string]struct {
+		call     func(context.Context, *Client) error
+		attempts int32
+	}{
+		"sql":  {func(ctx context.Context, c *Client) error { return c.SQL("DROP TABLE x").Exec(ctx) }, 1},
+		"pipe": {func(ctx context.Context, c *Client) error { return c.Pipe("p").Exec(ctx) }, 1},
+		"read": {func(ctx context.Context, c *Client) error { _, err := c.From("t").Fetch(ctx); return err }, 3},
+		"insert": {func(ctx context.Context, c *Client) error {
+			_, err := c.From("t").Insert(ctx, map[string]int{"a": 1})
+			return err
+		}, 3},
+	}
+	for name, tc := range calls {
+		t.Run(name, func(t *testing.T) {
+			var seenReqs atomic.Int32
+			stop := make(chan struct{})
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seenReqs.Add(1)
+				select {
+				case <-stop:
+				case <-r.Context().Done():
+				}
+			}))
+			t.Cleanup(func() { close(stop); srv.Close() })
+			c, err := New(srv.URL, WithRetry(RetryPolicy{MaxAttempts: 3, AttemptTimeout: 100 * time.Millisecond, MinBackoff: time.Millisecond}))
+			require.NoError(t, err)
+			err = tc.call(t.Context(), c)
+			require.ErrorIs(t, err, ErrAttemptTimeout)
+			assert.Equal(t, tc.attempts, seenReqs.Load())
+		})
+	}
+}
+
+// A listener that accepts nothing and never reads: against a real transport
+// the dial completes (the kernel backlog) and the headers are written, so
+// the request counts as sent; with the backlog full the dial itself hangs.
+// Either way the attempt must end at its timeout, never hang.
+func TestAttemptTimeoutOnANeverAcceptingListenerEnds(t *testing.T) {
+	_, base := listenTCP(t)
+	c, err := New(base, WithRetry(RetryPolicy{MaxAttempts: 1, AttemptTimeout: 50 * time.Millisecond}))
+	require.NoError(t, err)
+	err = c.SQL("DROP TABLE x").Exec(t.Context())
+	require.ErrorIs(t, err, ErrAttemptTimeout)
 }
 
 func TestAttemptTimeoutNegativeIsAnError(t *testing.T) {
