@@ -31,7 +31,8 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          # The newer of the two modules' floors, so vetting e2e/ doesn't refuse the toolchain.
+          go-version-file: e2e/go.mod
       - run: make fmt vet lint
 
   test:
@@ -58,9 +59,24 @@ jobs:
         if: ${{ matrix.go == 'oldest' }}
         run: make test
 
+  e2e:
+    name: Live tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: e2e/go.mod
+          cache-dependency-path: e2e/go.sum
+      # Starts ClickHouse and the server's :dev image with testcontainers; the runner has Docker.
+      - run: make test-e2e
+
   ci:
     name: CI
-    needs: [shared, lint, test]
+    needs: [shared, lint, test, e2e]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
