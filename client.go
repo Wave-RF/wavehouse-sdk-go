@@ -53,6 +53,11 @@ type Client struct {
 // is never changed. With no options the client is unauthenticated, retries reads up to
 // 3 attempts, and uses an *http.Client with no overall timeout.
 func New(baseURL string, opts ...Option) (*Client, error) {
+	// A path is not a host: prefixing a scheme to "/api/warehouse" would send
+	// requests, and the token, to a host named "api".
+	if t := strings.TrimSpace(baseURL); strings.HasPrefix(t, "/") && (!strings.HasPrefix(t, "//") || strings.HasPrefix(t, "///") || t == "//") {
+		return nil, fmt.Errorf("wavehouse: New: base URL %q: a path or empty host, not a host (give a host, such as \"example.com\")", baseURL)
+	}
 	u, err := url.Parse(withScheme(baseURL))
 	switch {
 	case err != nil:

@@ -39,7 +39,7 @@ func TestNewBaseURL(t *testing.T) {
 			assert.Equal(t, want, c.baseURL, in)
 		}
 	}
-	for _, bad := range []string{"", "   ", "ftp://host", "https://", "http://", "http://h/?a=1", "http://h/?", "http://h/#f", "http://h/%zz"} {
+	for _, bad := range []string{"", "   ", "ftp://host", "https://", "http://", "/api", "/api/warehouse", "/", "//", "///x", "https:///x", "http://h/?a=1", "http://h/?", "http://h/#f", "http://h/%zz"} {
 		_, err := New(bad)
 		assert.Error(t, err, bad)
 	}
