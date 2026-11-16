@@ -26,16 +26,16 @@ func newClient(t *testing.T, opts ...wavehouse.Option) *wavehouse.Client {
 	return c
 }
 
-var seq atomic.Int64 //nolint:unused // for the ingest and query tests
+var seq atomic.Int64
 
 // uniqueName returns a value no other test or run writes, to find a test's own rows.
-func uniqueName(t *testing.T) string { //nolint:unused // for the ingest and query tests
+func uniqueName(t *testing.T) string {
 	t.Helper()
 	return fmt.Sprintf("%s-%d-%d", strings.ReplaceAll(t.Name(), "/", "_"), time.Now().UnixNano(), seq.Add(1))
 }
 
 // eventRow is one e2e_events row, with a unique dedupe id.
-func eventRow(name string, value float64) map[string]any { //nolint:unused // for the ingest and query tests
+func eventRow(name string, value float64) map[string]any {
 	return map[string]any{
 		"event_id": fmt.Sprintf("%s-%d", name, seq.Add(1)),
 		"name":     name,
