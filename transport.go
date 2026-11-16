@@ -30,8 +30,9 @@ const (
 	// exactly-once, so it retries like a read.
 	callIngest
 	// callPipe may run a write pipe: retry a transport error only when the
-	// request never left; the server already marks a write pipe's errors
-	// retryable:false.
+	// request never left, and an APIError only on the server's own
+	// retryable:true, a 429, or a 503 with Retry-After — never a bare 5xx,
+	// which a proxy can send after the write ran.
 	callPipe
 	// callSQL may mutate: retry only a dial error, never an APIError.
 	callSQL
@@ -237,7 +238,15 @@ func isDialError(err error) bool {
 
 func shouldRetry(kind callKind, err error) bool {
 	if ae, ok := errors.AsType[*APIError](err); ok {
-		return kind != callSQL && ae.Retryable
+		switch kind {
+		case callSQL:
+			return false
+		case callPipe:
+			return ae.Retryable && (ae.fromServer || ae.StatusCode == http.StatusTooManyRequests ||
+				(ae.StatusCode == http.StatusServiceUnavailable && ae.RetryAfter > 0))
+		case callRead, callIngest:
+		}
+		return ae.Retryable
 	}
 	if re, ok := errors.AsType[*requestError](err); ok {
 		return re.retryable
@@ -272,7 +281,7 @@ func newAPIError(r *request, res *http.Response, body []byte) *APIError {
 	if json.Unmarshal(body, &env) == nil {
 		e.Message, e.Code = env.Error, env.Code
 		if env.Retryable != nil {
-			e.Retryable = *env.Retryable
+			e.Retryable, e.fromServer = *env.Retryable, true
 		}
 	}
 	if e.Message == "" {

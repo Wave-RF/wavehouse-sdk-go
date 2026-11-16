@@ -155,13 +155,20 @@ func TestRetryClassification(t *testing.T) {
 		"plain 400":           respond(400, `{"error":"x"}`),
 		"bare 429":            respond(429, ``),
 		"500 server says yes": respond(500, `{"error":"x","retryable":true}`),
+		"503 Retry-After": func(r *http.Request) (*http.Response, error) {
+			res := fakeResponse(r, 503, `{"error":"x"}`)
+			res.Header.Set("Retry-After", "5")
+			return res, nil
+		},
+		"proxy 504": respond(504, `<html>gateway timeout</html>`),
 	}
 	// Whether each call kind makes a second attempt after each failure.
 	retries := map[callKind]map[string]bool{
-		callRead:   {"dial error": true, "transport error": true, "plain 503": true, "503 server says no": false, "plain 400": false, "bare 429": true, "500 server says yes": true},
-		callIngest: {"dial error": true, "transport error": true, "plain 503": true, "503 server says no": false, "plain 400": false, "bare 429": true, "500 server says yes": true},
-		callPipe:   {"dial error": true, "transport error": false, "plain 503": true, "503 server says no": false, "plain 400": false, "bare 429": true, "500 server says yes": true},
-		callSQL:    {"dial error": true, "transport error": false, "plain 503": false, "503 server says no": false, "plain 400": false, "bare 429": false, "500 server says yes": false},
+		callRead:   {"dial error": true, "transport error": true, "plain 503": true, "503 server says no": false, "plain 400": false, "bare 429": true, "500 server says yes": true, "503 Retry-After": true, "proxy 504": true},
+		callIngest: {"dial error": true, "transport error": true, "plain 503": true, "503 server says no": false, "plain 400": false, "bare 429": true, "500 server says yes": true, "503 Retry-After": true, "proxy 504": true},
+		// A write pipe may have run behind a bare 5xx, so only the server's own verdict, 429 or 503+Retry-After resend it.
+		callPipe: {"dial error": true, "transport error": false, "plain 503": false, "503 server says no": false, "plain 400": false, "bare 429": true, "500 server says yes": true, "503 Retry-After": true, "proxy 504": false},
+		callSQL:  {"dial error": true, "transport error": false, "plain 503": false, "503 server says no": false, "plain 400": false, "bare 429": false, "500 server says yes": false, "503 Retry-After": false, "proxy 504": false},
 	}
 	for kind, row := range retries {
 		for name, fail := range failures {
@@ -368,4 +375,20 @@ func TestBadMethod(t *testing.T) {
 	require.NoError(t, err)
 	_, err = c.do(t.Context(), &request{method: "BAD METHOD", path: "/v1/x"})
 	assert.Error(t, err)
+}
+
+// A refused connection from the real transport, not a hand-built error, so a
+// change in how Go shapes it would fail here instead of silently disabling
+// dial retries for pipes and SQL.
+func TestRealRefusedConnectionIsADialError(t *testing.T) {
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+	require.NoError(t, ln.Close())
+
+	c, err := New("http://"+addr, WithRetry(RetryPolicy{MaxAttempts: 1}))
+	require.NoError(t, err)
+	err = c.SQL("SELECT 1").Exec(t.Context())
+	require.Error(t, err)
+	assert.True(t, IsRetryable(err), "a refused connection never reached the server: %v", err)
 }

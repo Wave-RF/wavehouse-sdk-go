@@ -22,7 +22,7 @@ func TestAPIErrorFromServerBody(t *testing.T) {
 	require.True(t, ok, "err = %v, want *APIError", err)
 	assert.Equal(t, APIError{
 		StatusCode: 400, Code: "clickhouse.rejected", Message: "Code: 62. DB::Exception: Syntax error",
-		Retryable: false, RetryAfter: 5 * time.Second, RequestID: "4f2a9c", Method: "GET", Path: "/v1/ops/schema",
+		Retryable: false, fromServer: true, RetryAfter: 5 * time.Second, RequestID: "4f2a9c", Method: "GET", Path: "/v1/ops/schema",
 	}, *ae)
 	assert.EqualError(t, err, "wavehouse: GET /v1/ops/schema: 400 clickhouse.rejected: Code: 62. DB::Exception: Syntax error (request 4f2a9c)")
 	assert.ErrorIs(t, err, ErrBadRequest)
@@ -36,13 +36,15 @@ func TestAPIErrorFallbacks(t *testing.T) {
 		body      string
 		message   string
 		retryable bool
+		// fromServer: the verdict came from the body, which is what lets a pipe call trust it.
+		fromServer bool
 	}{
-		{502, `<html>bad gateway</html>`, "Bad Gateway", true},
-		{404, `{"error":"table not found"}`, "table not found", false},
-		{408, ``, "Request Timeout", true},
-		{429, `[]`, "Too Many Requests", true},
-		{503, `{"error":"x","retryable":false}`, "x", false},
-		{400, `{"error":"x","retryable":true}`, "x", true},
+		{502, `<html>bad gateway</html>`, "Bad Gateway", true, false},
+		{404, `{"error":"table not found"}`, "table not found", false, false},
+		{408, ``, "Request Timeout", true, false},
+		{429, `[]`, "Too Many Requests", true, false},
+		{503, `{"error":"x","retryable":false}`, "x", false, true},
+		{400, `{"error":"x","retryable":true}`, "x", true, true},
 	}
 	for _, tc := range cases {
 		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
@@ -53,7 +55,7 @@ func TestAPIErrorFallbacks(t *testing.T) {
 			_, err := rec.client(t).Tables(t.Context())
 			ae, ok := errors.AsType[*APIError](err)
 			require.True(t, ok, "err = %v", err)
-			assert.Equal(t, APIError{StatusCode: tc.status, Message: tc.message, Retryable: tc.retryable, Method: "GET", Path: "/v1/ops/schema"}, *ae)
+			assert.Equal(t, APIError{StatusCode: tc.status, Message: tc.message, Retryable: tc.retryable, fromServer: tc.fromServer, Method: "GET", Path: "/v1/ops/schema"}, *ae)
 			// httptest sends no X-Request-Id, so there is no "(request …)".
 			assert.EqualError(t, err, fmt.Sprintf("wavehouse: GET /v1/ops/schema: %d: %s", tc.status, tc.message))
 		})
