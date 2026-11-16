@@ -6,6 +6,9 @@ module github.com/Wave-RF/wavehouse-sdk-go
 go 1.26
 
 // Test-only: the SDK's own code imports nothing outside the standard library.
-require github.com/stretchr/testify v1.12.1
+require (
+	github.com/stretchr/testify v1.12.1
+	go.uber.org/goleak v1.3.0
+)
 
 require go.yaml.in/yaml/v3 v3.0.5 // indirect
