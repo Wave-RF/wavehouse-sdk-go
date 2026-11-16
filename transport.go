@@ -51,6 +51,8 @@ type request struct {
 	body        []byte // nil sends no body
 	contentType string // required with a body
 	accept      string // "" means application/json
+	// header is sent over WithHeader's headers and under the SDK's own.
+	header http.Header
 }
 
 // response is a buffered answer: a 2xx, or the non-2xx behind an APIError.
@@ -139,6 +141,9 @@ func (c *Client) send(ctx context.Context, r *request) (*http.Response, error) {
 
 	// Custom headers first, so the SDK's own below win.
 	for k, v := range c.headers {
+		req.Header[k] = slices.Clone(v)
+	}
+	for k, v := range r.header {
 		req.Header[k] = slices.Clone(v)
 	}
 	req.Header.Set("User-Agent", c.userAgent)
