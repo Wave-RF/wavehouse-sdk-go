@@ -10,7 +10,7 @@ Official Go client for [WaveHouse](https://github.com/Wave-RF/WaveHouse), a sche
 go get github.com/Wave-RF/wavehouse-sdk-go
 ```
 
-The import path is `github.com/Wave-RF/wavehouse-sdk-go` and the package name is `wavehouse`. It requires Go 1.24 or newer.
+The import path is `github.com/Wave-RF/wavehouse-sdk-go` and the package name is `wavehouse`. It requires Go 1.26 or newer.
 
 ## Quick start
 
@@ -21,29 +21,29 @@ import (
     "context"
     "fmt"
     "log"
+    "os"
 
     wavehouse "github.com/Wave-RF/wavehouse-sdk-go"
 )
 
 func main() {
-    wh := wavehouse.NewClient(wavehouse.Config{
-        BaseURL: "http://localhost:8080",
-        Auth:    wavehouse.StaticToken("your-jwt"), // omit for unauthenticated access
-    })
-
-    page, err := wh.From("clicks").
-        Select("page", "button").
-        Where("page", wavehouse.OpEq, "/home").
-        Limit(10).
-        FetchUntyped(context.Background())
+    // Omit WithToken for unauthenticated access.
+    wh, err := wavehouse.New("http://localhost:8080", wavehouse.WithToken(os.Getenv("WAVEHOUSE_TOKEN")))
     if err != nil {
         log.Fatal(err)
     }
-    for _, row := range page.Data {
-        fmt.Println(row["page"], row["button"])
+
+    table, err := wh.Table(context.Background(), "clicks")
+    if err != nil {
+        log.Fatal(err)
+    }
+    for _, col := range table.Columns {
+        fmt.Println(col.Name, col.Type)
     }
 }
 ```
+
+Ingest, queries, pipes and streaming are being rewritten onto this client and return before the first release.
 
 ## Documentation
 
