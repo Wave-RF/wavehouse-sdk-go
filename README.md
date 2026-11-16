@@ -2,7 +2,7 @@
 
 Official Go client for [WaveHouse](https://github.com/Wave-RF/WaveHouse), a schema-aware real-time API gateway for ClickHouse. It has no third-party runtime dependencies, SSE parser included.
 
-**Status: not released yet.** The code was imported from the `go-sdk` branch of the WaveHouse repository and predates several server protocol changes. Bringing it up to date with the current protocol is tracked in this repository's issues, and no version is tagged until that is done.
+**Status: not released yet.** The code was imported from the `go-sdk` branch of the WaveHouse repository and has been brought up to date with the server protocol as of this branch. No version is tagged yet.
 
 ## Install
 
@@ -69,7 +69,7 @@ The same client runs pipes (`wh.Pipe("top_pages").Param("limit", 10).Scan(ctx, &
 
 Headers layer, lowest to highest: `WithHeader`, `WithHeaderFunc`, the call's own `Header(key, value)` (on a query, a pipe call or a SQL call; `SubscribeOptions.Header` for a stream), then the SDK's own (Authorization, Content-Type, Accept, User-Agent). A later layer replaces a key, case-insensitively, and never joins values.
 
-`RetryPolicy.AttemptTimeout` (off by default) gives each attempt its own deadline, so a stalled one is retried instead of holding the whole call. It covers a REST call, and each stream connect up to the response headers, but not an established stream. Your ctx still ends the call at once. A raw SQL or pipe call is not resent once the request may have reached the server.
+`RetryPolicy.AttemptTimeout` (off by default) gives each attempt its own deadline, so a stalled one is retried instead of holding the whole call. It covers a REST call, and each stream connect up to the response headers, but not an established stream. Your ctx still ends the call at once. A raw SQL or pipe call is not resent once its request headers were written, but an attempt that timed out while still connecting is.
 
 ## Streaming
 

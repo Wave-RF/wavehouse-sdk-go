@@ -637,7 +637,7 @@ func (s *Subscription) consume(res *http.Response) (delivered bool, err error) {
 	var columns []string
 	haveSchema := false
 	// Frames of each kind seen since the last delivery or skip, for frameKey.
-	var seen = map[string]int{}
+	seen := map[string]int{}
 	for {
 		f, err := rd.next()
 		if rd.retry > 0 {

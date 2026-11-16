@@ -145,7 +145,8 @@ type RetryPolicy struct {
 	// An attempt that hits the limit is retried after a backoff, within
 	// MaxAttempts, under the same rules as any transport error: a raw SQL
 	// call or a pipe call is not resent once the request may have reached the
-	// server, which is any timeout except one while connecting. The final
+	// server, which is any timeout after its headers were written; one that
+	// hit the limit while still connecting is resent. The final
 	// error says "attempt timeout" with the attempt count and matches
 	// [ErrAttemptTimeout]; it does not match [context.DeadlineExceeded].
 	AttemptTimeout time.Duration

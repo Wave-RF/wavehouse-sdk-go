@@ -17,7 +17,7 @@ The Go client for [WaveHouse](https://github.com/Wave-RF/WaveHouse). Module `git
 
 ## Rules
 
-- **Standard library only at runtime.** The SDK's own (non-test) code imports only the standard library, SSE framing included. Adding a runtime dependency needs a maintainer's agreement first. Test-only dependencies may be required by either module: the root `go.mod` carries testify for the unit tests and nothing else, and heavy ones such as testcontainers-go stay in `e2e/`. Dev tools run through `go run <module>@<version>` or `.bin/`, not `tool` directives.
+- **Standard library only at runtime.** The SDK's own (non-test) code imports only the standard library, SSE framing included. Adding a runtime dependency needs a maintainer's agreement first. Test-only dependencies may be required by either module: the root `go.mod` carries testify and `go.uber.org/goleak` for the unit tests and nothing else, and heavy ones such as testcontainers-go stay in `e2e/`. Dev tools run through `go run <module>@<version>` or `.bin/`, not `tool` directives.
 - The coverage floor is in the Makefile. Raise it when coverage rises; don't lower it to land a change.
 
 ## Tests today
@@ -29,7 +29,7 @@ The Go client for [WaveHouse](https://github.com/Wave-RF/WaveHouse). Module `git
 
 ## Known gap
 
-The SDK was written before several server protocol changes. Where it and the server disagree, the server wins; the catch-up is tracked in this repository's issues.
+The SDK is unreleased and has caught up with the server protocol as of this branch. Where it and the server disagree, the server wins; later drift is tracked in this repository's issues.
 
 ## Releasing
 

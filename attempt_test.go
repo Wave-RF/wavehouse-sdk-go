@@ -133,7 +133,7 @@ func TestCallerDeadlineDuringAttemptIsNotAnAttemptTimeout(t *testing.T) {
 // listenTCP returns a listener and its base URL, closed with the test.
 func listenTCP(t *testing.T) (net.Listener, string) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = ln.Close() })
 	return ln, "http://" + ln.Addr().String()

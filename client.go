@@ -28,7 +28,8 @@ import (
 // Failed calls are retried per the [RetryPolicy], but only where resending is
 // safe: a read is retried after a transport error or a retryable [*APIError];
 // a call that may write retries a transport error only when the request never
-// left (a dial failure). Each call's doc says which kind it is. A server's
+// left (no request headers were written, which includes a dial that failed or
+// was cut off by an attempt timeout). Each call's doc says which kind it is. A server's
 // Retry-After is honoured, capped at RetryPolicy.MaxBackoff, and cancelling
 // the ctx ends a wait at once. RetryPolicy.AttemptTimeout, off by default,
 // gives each attempt its own deadline.

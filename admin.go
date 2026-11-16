@@ -102,8 +102,8 @@ func tenantQuery(opts []AdminOption, kv ...string) url.Values {
 	return q
 }
 
-// Tables lists every table schema of the client's tenant, or of the tenant
-// [ForTenant] names, from GET /v1/ops/schema. Admin role or operator key. A
+// Tables lists every table schema of tenant "0", or of the tenant
+// [ForTenant] names (the X-Tenant-ID header does not affect admin routes), from GET /v1/ops/schema. Admin role or operator key. A
 // read: retried.
 func (c *Client) Tables(ctx context.Context, opts ...AdminOption) ([]TableSchema, error) {
 	var ts []TableSchema
@@ -147,7 +147,8 @@ type DLQStats struct {
 	Total  int64            `json:"total"`
 }
 
-// DLQStats returns the dead-letter queue counts of the client's tenant, from
+// DLQStats returns the dead-letter queue counts of tenant "0" (or the one [ForTenant]
+// names; the X-Tenant-ID header does not affect admin routes), from
 // GET /v1/ops/dlq/stats. Admin role or operator key. A read: retried.
 // [ForTenant] reads another tenant's; one with no dead-letter queue is
 // [ErrNotFound].
@@ -221,8 +222,8 @@ type PipeParameter struct {
 	Default any `json:"default,omitempty"`
 }
 
-// Pipes lists the client's tenant's named pipes, or those of the tenant
-// [ForTenant] names, from GET /v1/ops/pipes. Admin role or operator key. A
+// Pipes lists tenant "0"'s named pipes, or those of the tenant [ForTenant]
+// names (the X-Tenant-ID header does not affect admin routes), from GET /v1/ops/pipes. Admin role or operator key. A
 // read: retried.
 func (c *Client) Pipes(ctx context.Context, opts ...AdminOption) ([]PipeDefinition, error) {
 	var ps []PipeDefinition
