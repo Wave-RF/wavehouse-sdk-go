@@ -4,7 +4,7 @@ The Go client for [WaveHouse](https://github.com/Wave-RF/WaveHouse). Module `git
 
 ## Layout
 
-- The package is flat at the repo root: `client.go` (`New`, `Client`), `options.go` (the `With…` options and `RetryPolicy`), `transport.go` (requests, retries, redirects, decoding), `errors.go` (`APIError`, sentinels) and `admin.go` (health, version and the `/v1/ops/*` reads). Ingest, queries, pipes, raw SQL and streams are being rewritten onto this core.
+- The package is flat at the repo root: `client.go` (`New`, `Client`), `options.go` (the `With…` options and `RetryPolicy`), `transport.go` (requests, retries, redirects, decoding), `errors.go` (`APIError`, sentinels), `admin.go` (health, version and the `/v1/ops/*` reads), `subscribe.go` (`Subscribe`: the stream's reconnect loop and row decoding) and `sse.go` (the event-stream parser). Ingest, queries, pipes and raw SQL are being rewritten onto this core.
 - `testdata/wire_cases.json` holds the request conformance cases. The JS SDK is meant to replay the same cases.
 - `e2e/` holds the live tests, as a module of their own so their dependencies stay out of the SDK's `go.mod`. They start ClickHouse and the server's `ghcr.io/wave-rf/wavehouse:dev` image with testcontainers; `e2e/testdata/settings/` is that server's settings directory.
 - `scripts/` and `.github/` hold the files kept in step with `wavehouse-sdk-js` (see *Files kept in step*) plus this repo's `ci.yml`, `release.yml` and `scripts/ci/release.sh`.

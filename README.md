@@ -43,7 +43,25 @@ func main() {
 }
 ```
 
-Ingest, queries, pipes and streaming are being rewritten onto this client and return before the first release.
+Ingest, queries and pipes are being rewritten onto this client and return before the first release.
+
+## Streaming
+
+`Subscribe` streams the rows ingested into a table, reconnecting and resuming on its own until you close it:
+
+```go
+sub, err := wh.Subscribe(ctx, "clicks", nil)
+if err != nil {
+    log.Fatal(err)
+}
+defer sub.Close()
+for sub.Next() {
+    fmt.Println(sub.Event().Row())
+}
+if err := sub.Err(); err != nil {
+    log.Fatal(err)
+}
+```
 
 ## Documentation
 
