@@ -218,3 +218,100 @@ func ExampleClient_Pipes() {
 		fmt.Println(p.Name, p.AllowedRoles)
 	}
 }
+
+func ExampleClient_From() {
+	wh, err := wavehouse.New("http://localhost:8080", wavehouse.WithToken(os.Getenv("WAVEHOUSE_TOKEN")))
+	if err != nil {
+		log.Fatal(err)
+	}
+	// One chain, ending in Scan: a query is a value you can keep and extend.
+	recent := wh.From("clicks").Where("score", wavehouse.Gt, 10).OrderBy("received_timestamp", wavehouse.Desc).Limit(100)
+	rows, err := recent.Select("page", "score").Fetch(context.Background())
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, row := range rows {
+		fmt.Println(row["page"], row["score"])
+	}
+}
+
+func ExampleQuery_Insert() {
+	wh, err := wavehouse.New("http://localhost:8080", wavehouse.WithToken(os.Getenv("WAVEHOUSE_TOKEN")))
+	if err != nil {
+		log.Fatal(err)
+	}
+	type click struct {
+		EventID string `json:"event_id"` // the server's dedupe id field, when it has one
+		Page    string `json:"page"`
+	}
+	res, err := wh.From("clicks").Insert(context.Background(), []click{{"e1", "/home"}, {"e2", "/about"}})
+	// The server answers 200 even when it rejects records: the result is returned
+	// with an *InsertError saying which.
+	if ie, ok := errors.AsType[*wavehouse.InsertError](err); ok {
+		for _, f := range ie.Failed {
+			fmt.Printf("record %d rejected: %s\n", f.Index, f.Error)
+		}
+	} else if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(res.Succeeded, "published,", res.Duplicates, "duplicates")
+}
+
+func ExampleQuery_Scan() {
+	wh, err := wavehouse.New("http://localhost:8080", wavehouse.WithToken(os.Getenv("WAVEHOUSE_TOKEN")))
+	if err != nil {
+		log.Fatal(err)
+	}
+	var top []struct {
+		Page  string `json:"page"`
+		Views uint64 `json:"views"` // exact, even above 2^53
+	}
+	err = wh.From("clicks").
+		Count("*", "views").
+		GroupBy("page").
+		Select("page").
+		OrderBy("views", wavehouse.Desc).
+		Limit(10).
+		TimeRange("received_timestamp", "24h", "").
+		Scan(context.Background(), &top)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, r := range top {
+		fmt.Println(r.Page, r.Views)
+	}
+}
+
+func ExampleClient_Pipe() {
+	wh, err := wavehouse.New("http://localhost:8080", wavehouse.WithToken(os.Getenv("WAVEHOUSE_TOKEN")))
+	if err != nil {
+		log.Fatal(err)
+	}
+	var rows []struct {
+		Page  string `json:"page"`
+		Views int64  `json:"views"`
+	}
+	err = wh.Pipe("top_pages").Param("limit", 10).Param("pages", []string{"/home", "/about"}).Scan(context.Background(), &rows)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(len(rows))
+}
+
+func ExampleClient_SQL() {
+	wh, err := wavehouse.New("http://localhost:8080", wavehouse.WithOperatorKey(os.Getenv("WAVEHOUSE_OPERATOR_KEY")))
+	if err != nil {
+		log.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := wh.SQL("CREATE TABLE IF NOT EXISTS t (a UInt64) ENGINE = Memory").Exec(ctx); err != nil {
+		log.Fatal(err)
+	}
+	var out []struct {
+		N uint64 `json:"n"`
+	}
+	if err := wh.SQL("SELECT count() AS n FROM t").Scan(ctx, &out); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(out[0].N)
+}
