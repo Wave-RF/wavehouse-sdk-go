@@ -33,6 +33,8 @@ const (
 var stack struct {
 	url        string
 	adminToken string
+	// managed is true when testcontainers started the server from testdata/settings.
+	managed bool
 }
 
 func TestMain(m *testing.M) {
@@ -58,6 +60,7 @@ func run(m *testing.M) int {
 			return 1
 		}
 		stack.adminToken = mintToken("admin", 24*time.Hour)
+		stack.managed = true
 	}
 
 	if err := createFixtures(ctx); err != nil {

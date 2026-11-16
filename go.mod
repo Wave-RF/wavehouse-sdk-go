@@ -1,6 +1,11 @@
 module github.com/Wave-RF/wavehouse-sdk-go
 
-// Library floor, deliberately lower than the server's pinned toolchain:
-// the newest things this module uses are range-over-int and math/rand/v2
-// (Go 1.22). Keep it a supported-releases floor, not a patch pin.
-go 1.24
+// The floor matches grafana-plugin-sdk-go's and the oldest Go release still
+// supported. The newest things this module uses are testing/synctest,
+// errors.AsType and new(expr) (Go 1.26). Keep it a release floor, not a patch pin.
+go 1.26
+
+// Test-only: the SDK's own code imports nothing outside the standard library.
+require github.com/stretchr/testify v1.12.1
+
+require go.yaml.in/yaml/v3 v3.0.5 // indirect
