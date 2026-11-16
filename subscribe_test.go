@@ -253,6 +253,7 @@ func TestSubscribeReconnectsAfterEOF(t *testing.T) {
 		assert.Equal(t, ts(1), f.requests()[1].Header.Get("Last-Event-ID"))
 		// The first connection delivered, so the wait is the first backoff step: 500ms ±20%.
 		assert.InDelta(t, float64(500*time.Millisecond), float64(f.gap(1)), float64(100*time.Millisecond))
+		synctest.Wait() // OnState runs on a goroutine of its own
 		assert.Equal(t, []State{StateConnecting, StateLive, StateReconnecting, StateLive}, st.list())
 	})
 }
@@ -383,6 +384,7 @@ func TestSubscribeTerminalStatus(t *testing.T) {
 				assert.Nil(t, sub)
 				assert.Equal(t, fmt.Sprintf("wavehouse: GET /v1/stream: %d: no (request req-1)", status), err.Error())
 				assert.Len(t, f.requests(), 1, "a terminal status was retried")
+				synctest.Wait() // OnState runs on a goroutine of its own
 				assert.Equal(t, []State{StateConnecting, StateClosed}, st.list())
 			})
 		})
@@ -407,6 +409,7 @@ func TestSubscribeTerminalAfterLive(t *testing.T) {
 		assert.False(t, sub.Next())
 		require.ErrorIs(t, sub.Err(), ErrNotFound)
 		assert.False(t, sub.Next(), "Next after the end")
+		synctest.Wait() // OnState runs on a goroutine of its own
 		assert.Equal(t, []State{StateConnecting, StateLive, StateReconnecting, StateClosed}, st.list())
 		require.NoError(t, sub.Close())
 		require.ErrorIs(t, sub.Err(), ErrNotFound, "Close hides the error that ended the stream")
@@ -480,6 +483,7 @@ func TestSubscribeFirstConnectGivesUp(t *testing.T) {
 		_, err := c.Subscribe(t.Context(), "t", &SubscribeOptions{OnState: st.on})
 		require.ErrorIs(t, err, ErrUnavailable)
 		assert.Len(t, f.requests(), 3, "the default policy's three attempts")
+		synctest.Wait() // OnState runs on a goroutine of its own
 		assert.Equal(t, []State{StateConnecting, StateClosed}, st.list())
 	})
 }
@@ -625,6 +629,7 @@ func TestSubscribeCloseUnblocksNext(t *testing.T) {
 				require.NoError(t, sub.Close())
 				require.NoError(t, sub.Close(), "a second Close")
 				assert.False(t, sub.Next())
+				synctest.Wait() // OnState runs on a goroutine of its own
 				assert.Equal(t, []State{StateConnecting, StateLive, StateClosed}, st.list())
 			})
 		})
@@ -726,4 +731,157 @@ func TestSubscribeNoLeak(t *testing.T) {
 	require.NoError(t, sub.Close())
 	assert.False(t, <-got)
 	require.NoError(t, sub.Err())
+}
+
+// Close never waits on OnState, even when the caller holds a lock OnState
+// takes; the old design deadlocked here.
+func TestSubscribeCloseUnderOnStateLock(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var mu sync.Mutex
+		c, _ := newFakeStream(t, func(_ int, r *http.Request) (*http.Response, error) {
+			return sseOpen(r, schemaFrame("a")), nil
+		})
+		sub, err := c.Subscribe(t.Context(), "t", &SubscribeOptions{OnState: func(State) {
+			mu.Lock()
+			defer mu.Unlock()
+		}})
+		require.NoError(t, err)
+		mu.Lock()
+		require.NoError(t, sub.Close())
+		mu.Unlock()
+		synctest.Wait()
+	})
+}
+
+// Close means the connection and its reader are gone, even while an OnState
+// call is blocked.
+func TestSubscribeCloseWhileOnStateBlocked(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		var bodies []*testBody
+		var mu sync.Mutex
+		c, _ := newFakeStream(t, func(n int, r *http.Request) (*http.Response, error) {
+			frames := schemaFrame("a")
+			hold := time.Duration(-1)
+			if n == 1 {
+				frames, hold = frames+rowFrame(1, 1), 0
+			}
+			b := sseBody(frames, hold)
+			mu.Lock()
+			bodies = append(bodies, b)
+			mu.Unlock()
+			return sseWith(r, b), nil
+		})
+		lives := 0
+		sub, err := c.Subscribe(t.Context(), "t", &SubscribeOptions{OnState: func(st State) {
+			if st == StateLive {
+				if lives++; lives == 2 {
+					<-release // blocks while the second connection is open
+				}
+			}
+		}})
+		require.NoError(t, err)
+		assert.Equal(t, ts(1), next(t, sub).ID)
+		time.Sleep(time.Minute) // fake time: past the backoff to the second connection
+		synctest.Wait()
+
+		require.NoError(t, sub.Close())
+		select {
+		case <-sub.done:
+		default:
+			assert.Fail(t, "Close returned with the reader still running")
+		}
+		mu.Lock()
+		require.Len(t, bodies, 2)
+		select {
+		case <-bodies[1].closed:
+		default:
+			assert.Fail(t, "Close returned with the connection open")
+		}
+		mu.Unlock()
+		close(release)
+	})
+}
+
+// A reconnect before any event was delivered replays from the first live
+// connection's start, so rows ingested during the backoff aren't lost.
+func TestSubscribeResumesFromConnectionStart(t *testing.T) {
+	for name, date := range map[string]string{"server Date": "Mon, 16 Nov 2026 16:00:00 GMT", "no Date": ""} {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				c, f := newFakeStream(t, func(n int, r *http.Request) (*http.Response, error) {
+					res := sseOpen(r, ": connected\n\n", schemaFrame("a"))
+					if n == 1 {
+						res = sseEnds(r, ": connected\n\n", schemaFrame("a"))
+					}
+					if date != "" {
+						res.Header.Set("Date", date)
+					}
+					return res, nil
+				})
+				sub, err := c.Subscribe(t.Context(), "t", nil)
+				require.NoError(t, err)
+				defer func() { _ = sub.Close() }()
+				time.Sleep(time.Minute)
+
+				reqs := f.requests()
+				require.GreaterOrEqual(t, len(reqs), 2)
+				assert.Equal(t, "table=t", reqs[0].URL.RawQuery)
+				want := "2026-11-16T16:00:00Z"
+				if date == "" {
+					f.mu.Lock()
+					want = f.at[0].Add(-resumeSlack).UTC().Format(time.RFC3339Nano)
+					f.mu.Unlock()
+				}
+				for _, req := range reqs[1:] {
+					assert.Equal(t, want, req.URL.Query().Get("since"))
+					assert.Empty(t, req.Header.Values("Last-Event-Id"))
+				}
+			})
+		})
+	}
+}
+
+// When Subscribe returns, OnState has seen StateLive, however slow it is.
+func TestSubscribeReportsLiveBeforeReturning(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var st states
+		c, _ := newFakeStream(t, func(_ int, r *http.Request) (*http.Response, error) { return sseOpen(r), nil })
+		sub, err := c.Subscribe(t.Context(), "t", &SubscribeOptions{OnState: func(s State) {
+			if s == StateLive {
+				time.Sleep(time.Second)
+			}
+			st.on(s)
+		}})
+		require.NoError(t, err)
+		assert.Equal(t, []State{StateConnecting, StateLive}, st.list())
+		require.NoError(t, sub.Close())
+	})
+}
+
+// Once live, a failing token source is ridden out rather than ending the
+// stream; at the first connect it is still returned (TestSubscribeTokenSourceError).
+func TestSubscribeTokenSourceRetriedAfterLive(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var calls atomic.Int32
+		source := func(context.Context) (string, error) {
+			if n := calls.Add(1); n == 2 || n == 3 {
+				return "", errors.New("idp down")
+			}
+			return "tok", nil
+		}
+		c, f := newFakeStream(t, func(n int, r *http.Request) (*http.Response, error) {
+			if n == 1 {
+				return sseEnds(r, schemaFrame("a"), rowFrame(1, 1)), nil
+			}
+			return sseOpen(r, schemaFrame("a"), rowFrame(2, 2)), nil
+		}, WithTokenSource(source))
+		sub, err := c.Subscribe(t.Context(), "t", nil)
+		require.NoError(t, err)
+		defer func() { _ = sub.Close() }()
+		assert.Equal(t, ts(1), next(t, sub).ID)
+		assert.Equal(t, ts(2), next(t, sub).ID)
+		assert.Len(t, f.requests(), 2)
+		assert.Equal(t, int32(4), calls.Load())
+	})
 }

@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -21,6 +20,10 @@ const streamPath = "/v1/stream"
 // consumer that has fallen behind. Past it the SDK stops reading the
 // connection, so memory stays bounded and the server sees the backpressure.
 const eventBuffer = 64
+
+// resumeSlack is how far before a connection's local start time a reconnect
+// replays from when the server sent no Date header to take its clock from.
+const resumeSlack = 5 * time.Second
 
 // healthyConnection is how long a connection must stay up, delivering
 // nothing, before a reconnect starts its backoff from MinBackoff again.
@@ -68,11 +71,13 @@ type SubscribeOptions struct {
 	// ResumeID resumes after a checkpoint: a previous [Event.ID], sent as the
 	// Last-Event-ID header. It wins over Since.
 	ResumeID string
-	// OnState, when set, is called with each change of connection state, the
-	// first (StateConnecting) before Subscribe returns and the last
-	// (StateClosed) exactly once. It is called from the subscription's own
-	// goroutine and never under a lock: it must return quickly, because
-	// events are not read while it runs.
+	// OnState, when set, is called with each change of connection state, in
+	// order, one call at a time, on a goroutine of its own and never under a
+	// lock of the SDK's. The calls up to the first StateLive complete before
+	// Subscribe returns, so Subscribe must not be called holding a lock that
+	// OnState takes. After that, a slow OnState delays only later state
+	// reports, never events or Close. StateClosed comes last, exactly once,
+	// and can come after Close has returned.
 	OnState func(State)
 }
 
@@ -134,20 +139,20 @@ func (e Event) Decode(dst any) error {
 // closed, its ctx is done, or the server refuses it for good. Its goroutine
 // and connection last until then, so always Close it.
 type Subscription struct {
-	c       *Client
-	table   string
-	since   time.Time
-	onState func(State)
+	c     *Client
+	table string
+	// since is where a connection with no event to resume from replays from:
+	// the caller's Since, else the start of the first live connection.
+	since time.Time
+	// notes delivers OnState calls; nil without OnState.
+	notes *notifier
 
 	ctx    context.Context
 	cancel context.CancelFunc
 	// events is closed by the reader goroutine as it exits, after err is set.
 	events chan Event
-	done   chan struct{}
-
-	// inCallback is set while OnState runs, so a Close made from inside it
-	// doesn't wait on its own goroutine.
-	inCallback atomic.Bool
+	// done is closed when the reader goroutine has exited, its connection closed.
+	done chan struct{}
 
 	mu  sync.Mutex
 	err error
@@ -175,8 +180,9 @@ type Subscription struct {
 // frame is retried without limit, waiting per the RetryPolicy's backoff (the
 // count starts over after a connection that delivered an event or stayed up
 // 30s), and resumes with Last-Event-ID set to the last event delivered. The
-// token source is called on every connect. A refusal for good, as above,
-// ends the subscription with that error in Err.
+// token source is called on every connect, and once a connection has been
+// live, its errors are retried like a transport error. A refusal for good,
+// as above, ends the subscription with that error in Err.
 //
 // The server announces the column names in an "event: schema" frame and then
 // sends each row as a positional array; Subscribe zips them into an [Event].
@@ -184,10 +190,13 @@ type Subscription struct {
 // connection reopened from the last delivered event, which makes the server
 // announce the columns again.
 //
-// Delivery is at-least-once across reconnects: the server resumes by time,
-// and every row of one ingest request carries the same ID, so events at the
-// resume point can arrive twice. Dedupe on the row's own identity if that
-// matters. Known server limitations: events published while a connection
+// Delivery is at-least-once across reconnects. A reconnect resumes from the
+// last delivered event; when none has been delivered yet, it replays from
+// Since or, without one, from the start of the first live connection (the
+// server's Date header, else the local clock less 5s), so rows ingested
+// while it reconnects are not lost. The server resumes by time, and every
+// row of one ingest request carries the same ID, so events at the resume
+// point can arrive twice. Dedupe on the row's own identity if that matters. Known server limitations: events published while a connection
 // opens can be missed (WaveHouse#784), and a same-length column change after
 // a gap-fill is not re-announced (WaveHouse#543). A consumer that falls far
 // behind stops the SDK reading, and the server then drops events for this
@@ -201,16 +210,18 @@ func (c *Client) Subscribe(ctx context.Context, table string, opts *SubscribeOpt
 	}
 	sctx, cancel := context.WithCancel(ctx)
 	s := &Subscription{
-		c:       c,
-		table:   table,
-		since:   opts.Since,
-		onState: opts.OnState,
-		ctx:     sctx,
-		cancel:  cancel,
-		events:  make(chan Event, eventBuffer),
-		done:    make(chan struct{}),
-		lastID:  opts.ResumeID,
-		state:   -1, // none yet, so StateConnecting is reported
+		c:      c,
+		table:  table,
+		since:  opts.Since,
+		ctx:    sctx,
+		cancel: cancel,
+		events: make(chan Event, eventBuffer),
+		done:   make(chan struct{}),
+		lastID: opts.ResumeID,
+		state:  -1, // none yet, so StateConnecting is reported
+	}
+	if opts.OnState != nil {
+		s.notes = newNotifier(opts.OnState)
 	}
 	ready := make(chan error, 1)
 	go s.run(ready)
@@ -253,15 +264,12 @@ func (s *Subscription) Err() error {
 }
 
 // Close ends the subscription and unblocks a waiting Next. It is safe to call
-// more than once and from any goroutine. It returns once the subscription's
-// goroutine has exited and its connection is closed, except when called while
-// an OnState callback runs, which it may be called from; the goroutine then
-// exits as soon as the callback returns. It always returns nil.
+// more than once and from any goroutine, OnState included. It returns once
+// the connection is closed and the goroutine reading it has exited, and it
+// never waits on OnState. It always returns nil.
 func (s *Subscription) Close() error {
 	s.cancel()
-	if !s.inCallback.Load() {
-		<-s.done
-	}
+	<-s.done
 	return nil
 }
 
@@ -281,6 +289,60 @@ func (s *Subscription) run(ready chan<- error) {
 	s.setState(StateClosed)
 }
 
+// notifier calls OnState on a goroutine of its own, so the reader, and Close
+// waiting on it, never wait on the caller's code. The queue is unbounded but
+// grows by at most one state per connection attempt.
+type notifier struct {
+	fn    func(State)
+	wake  chan struct{}
+	mu    sync.Mutex
+	queue []note
+}
+
+type note struct {
+	state State
+	ack   chan struct{} // closed once fn has returned for it; may be nil
+}
+
+func newNotifier(fn func(State)) *notifier {
+	n := &notifier{fn: fn, wake: make(chan struct{}, 1)}
+	go n.run()
+	return n
+}
+
+func (n *notifier) push(st State, ack chan struct{}) {
+	n.mu.Lock()
+	n.queue = append(n.queue, note{st, ack})
+	n.mu.Unlock()
+	select {
+	case n.wake <- struct{}{}:
+	default:
+	}
+}
+
+// run delivers notes until StateClosed, always the last one pushed.
+func (n *notifier) run() {
+	for range n.wake {
+		for {
+			n.mu.Lock()
+			if len(n.queue) == 0 {
+				n.mu.Unlock()
+				break
+			}
+			nt := n.queue[0]
+			n.queue = n.queue[1:]
+			n.mu.Unlock()
+			n.fn(nt.state)
+			if nt.ack != nil {
+				close(nt.ack)
+			}
+			if nt.state == StateClosed {
+				return
+			}
+		}
+	}
+}
+
 // loop connects and reconnects until the ctx is done or an error is terminal,
 // and returns that error. ready is sent the first connect's outcome, once.
 func (s *Subscription) loop(ready chan<- error) (end error) {
@@ -291,10 +353,17 @@ func (s *Subscription) loop(ready chan<- error) (end error) {
 	}()
 	s.setState(StateConnecting)
 	failures := 0
+	live := false
 	for {
 		res, err := s.connect() //nolint:bodyclose // consume closes it
 		if err == nil {
+			live = true
+			if s.since.IsZero() && s.lastID == "" {
+				s.since = connectionStart(res)
+			}
 			if ready != nil {
+				// OnState has seen StateLive by the time Subscribe returns.
+				s.setStateWait(StateLive)
 				ready <- nil
 				ready = nil
 			}
@@ -313,7 +382,9 @@ func (s *Subscription) loop(ready chan<- error) (end error) {
 			if s.ctx.Err() != nil {
 				return s.ctxError(err)
 			}
-			if !IsRetryable(err) || (ready != nil && failures+1 >= s.c.retry.MaxAttempts) {
+			// A token source that fails after the stream was live is a blip to ride out, not a refusal.
+			retryable := IsRetryable(err) || (live && errors.Is(err, errTokenSource))
+			if !retryable || (ready != nil && failures+1 >= s.c.retry.MaxAttempts) {
 				return err
 			}
 		}
@@ -368,6 +439,16 @@ func (s *Subscription) connect() (*http.Response, error) {
 			streamPath, res.StatusCode, ct)
 	}
 	return res, nil
+}
+
+// connectionStart is when res's connection began by the server's clock,
+// which is what it compares since against: its Date header (whole seconds,
+// so never later than the start), else the local clock less resumeSlack.
+func connectionStart(res *http.Response) time.Time {
+	if t, err := http.ParseTime(res.Header.Get("Date")); err == nil {
+		return t
+	}
+	return time.Now().Add(-resumeSlack)
 }
 
 func isEventStream(contentType string) bool {
@@ -450,16 +531,29 @@ func decodeEvent(f sseEvent, columns []string, table string) (Event, error) {
 	return ev, nil
 }
 
-// setState records st and tells OnState, if it changed.
+// setState records st and queues it for OnState, if it changed.
 func (s *Subscription) setState(st State) {
 	if st == s.state {
 		return
 	}
 	s.state = st
-	if s.onState == nil {
+	if s.notes != nil {
+		s.notes.push(st, nil)
+	}
+}
+
+// setStateWait is setState that also waits until OnState has returned for
+// st, or the ctx is done.
+func (s *Subscription) setStateWait(st State) {
+	if st == s.state || s.notes == nil {
+		s.state = st
 		return
 	}
-	s.inCallback.Store(true)
-	defer s.inCallback.Store(false)
-	s.onState(st)
+	s.state = st
+	ack := make(chan struct{})
+	s.notes.push(st, ack)
+	select {
+	case <-ack:
+	case <-s.ctx.Done():
+	}
 }

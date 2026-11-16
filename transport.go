@@ -164,7 +164,7 @@ func (c *Client) send(ctx context.Context, r *request) (*http.Response, error) {
 	}
 	auth, err := c.authorization(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("wavehouse: %s %s: token source: %w", r.method, r.path, err)
+		return nil, fmt.Errorf("wavehouse: %s %s: %w: %w", r.method, r.path, errTokenSource, err)
 	}
 	req.Header.Del("Authorization")
 	if auth != "" {
@@ -187,6 +187,10 @@ func (c *Client) send(ctx context.Context, r *request) (*http.Response, error) {
 	}
 	return res, nil
 }
+
+// errTokenSource marks a failure of the WithTokenSource function, which a
+// stream retries once it has been live.
+var errTokenSource = errors.New("token source")
 
 func (c *Client) url(r *request) string {
 	q := r.query
