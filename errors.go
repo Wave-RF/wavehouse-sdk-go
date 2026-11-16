@@ -22,8 +22,13 @@ type APIError struct {
 	// has none.
 	Message string
 	// Retryable is the server's "retryable" verdict when the body carries
-	// one; otherwise true for 408, 429 and every 5xx.
+	// one; otherwise true for 408, 429 and every 5xx. It says nothing about
+	// the call: a raw SQL call or a pipe may have run before the failure, so
+	// the SDK does not resend it on every Retryable error. Ask [IsRetryable]
+	// whether resending THIS call is safe.
 	Retryable bool
+	// kind is the call that got this answer, for IsRetryable.
+	kind callKind
 	// fromServer is whether Retryable came from the body rather than the status.
 	fromServer bool
 	// RetryAfter is the parsed Retry-After header (seconds or an HTTP-date),
@@ -89,15 +94,21 @@ var sentinelStatus = map[error]int{
 	ErrUnavailable:  http.StatusServiceUnavailable,
 }
 
-// IsRetryable reports whether err is worth retrying later: an [*APIError]
-// whose Retryable is set, or a transport error the SDK itself would have
-// retried for that call. A cancelled or expired context is never retryable.
+// IsRetryable reports whether resending the call that failed with err is safe,
+// by the rule the SDK itself retries by. [APIError.Retryable] is the server's
+// verdict on the failure; IsRetryable also weighs the call. A raw SQL call is
+// never retryable after an APIError, a pipe only on the server's own
+// retryable:true, a 429 or a 503 with Retry-After (a proxy's bare 5xx may
+// follow a write that ran), and a read or an ingest on any Retryable
+// APIError. A transport error is retryable when the request certainly never
+// left or the call is a read or an ingest. A cancelled or expired context is
+// never retryable.
 func IsRetryable(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
 	if e, ok := errors.AsType[*APIError](err); ok {
-		return e.Retryable
+		return shouldRetry(e.kind, e)
 	}
 	if e, ok := errors.AsType[*requestError](err); ok {
 		return e.retryable

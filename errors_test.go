@@ -94,3 +94,38 @@ func TestIsRetryable(t *testing.T) {
 		assert.Equal(t, tc.want, IsRetryable(tc.err), name)
 	}
 }
+
+// IsRetryable answers "safe to resend THIS call", by the rule the SDK retries
+// by, while APIError.Retryable stays the server's verdict.
+func TestIsRetryableFollowsTheCallKind(t *testing.T) {
+	type call func(*Client) error
+	sql := func(c *Client) error { return c.SQL("DROP TABLE x").Exec(t.Context()) }
+	pipe := func(c *Client) error { return c.Pipe("p").Exec(t.Context()) }
+	read := func(c *Client) error { _, err := c.From("t").Fetch(t.Context()); return err }
+	ingest := func(c *Client) error { _, err := c.From("t").Insert(t.Context(), map[string]int{"a": 1}); return err }
+	cases := map[string]struct {
+		call        call
+		h           http.HandlerFunc
+		field, safe bool
+	}{
+		"sql server says retryable":  {sql, reply(503, `{"error":"x","retryable":true}`), true, false},
+		"sql 429":                    {sql, reply(429, `{"error":"x"}`), true, false},
+		"pipe bare 502":              {pipe, reply(502, ``), true, false},
+		"pipe server says retryable": {pipe, reply(500, `{"error":"x","retryable":true}`), true, true},
+		"pipe 429":                   {pipe, reply(429, ``), true, true},
+		"pipe 503 Retry-After":       {pipe, reply(503, ``, "Retry-After", "1"), true, true},
+		"pipe 400":                   {pipe, reply(400, `{"error":"x"}`), false, false},
+		"read bare 502":              {read, reply(502, ``), true, true},
+		"read server says no":        {read, reply(503, `{"error":"x","retryable":false}`), false, false},
+		"ingest bare 502":            {ingest, reply(502, ``), true, true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := tc.call(newRecorder(t, tc.h).client(t))
+			ae, ok := errors.AsType[*APIError](err)
+			require.True(t, ok, "%v", err)
+			assert.Equal(t, tc.field, ae.Retryable, "the server's verdict")
+			assert.Equal(t, tc.safe, IsRetryable(err), "safe to resend this call")
+		})
+	}
+}

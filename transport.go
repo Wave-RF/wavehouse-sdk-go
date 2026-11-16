@@ -337,6 +337,7 @@ func newAPIError(r *request, res *http.Response, body []byte) *APIError {
 		StatusCode: res.StatusCode,
 		Method:     r.method,
 		Path:       r.path,
+		kind:       r.kind,
 		RequestID:  res.Header.Get("X-Request-Id"),
 		RetryAfter: parseRetryAfter(res.Header.Get("Retry-After"), time.Now()),
 		Retryable: res.StatusCode == http.StatusRequestTimeout ||
