@@ -117,7 +117,7 @@
     "name": "countDistinct aggregation with default alias",
     "endpoint": "query", "table": "clicks", "operations": [{"method": "countDistinct", "args": ["page", ""]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"aggregations": [{"fn": "countDistinct", "column": "page", "alias": "count_distinct_page"}]}
+    "expected_body": {"aggregations": [{"fn": "countDistinct", "column": "page", "alias": "countDistinct_page"}]}
   },
   {
     "name": "custom aggregate function",
@@ -130,6 +130,36 @@
     "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "groupBy", "args": ["page"]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
     "expected_body": {"columns": ["page"], "group_by": ["page"]}
+  },
+  {
+    "name": "select star means select_all",
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["*"]}],
+    "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
+    "expected_body": {"select_all": true}
+  },
+  {
+    "name": "groupBy joins its columns to the selection",
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "count", "args": ["*", ""]}, {"method": "groupBy", "args": ["page", "button"]}],
+    "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
+    "expected_body": {"columns": ["page", "button"], "group_by": ["page", "button"], "aggregations": [{"fn": "count", "column": "*", "alias": "count"}]}
+  },
+  {
+    "name": "groupBy keeps the order of columns already selected",
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["button", "page"]}, {"method": "sum", "args": ["score", ""]}, {"method": "groupBy", "args": ["page"]}],
+    "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
+    "expected_body": {"columns": ["button", "page"], "group_by": ["page"], "aggregations": [{"fn": "sum", "column": "score", "alias": "sum_score"}]}
+  },
+  {
+    "name": "aggregate default alias is fn_column",
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "aggregate", "args": ["uniqExact", "user_id", ""]}],
+    "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
+    "expected_body": {"aggregations": [{"fn": "uniqExact", "column": "user_id", "alias": "uniqExact_user_id"}]}
+  },
+  {
+    "name": "orderBy direction is lowercased",
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "orderBy", "args": ["page", "DESC"]}],
+    "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
+    "expected_body": {"columns": ["page"], "order_by": [{"column": "page", "dir": "desc"}]}
   },
   {
     "name": "orderBy ascending",
@@ -156,22 +186,28 @@
     "expected_body": {"columns": ["page"]}
   },
   {
-    "name": "timeRange with since only",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "timeRange", "args": ["received_timestamp", "1h", ""]}],
+    "name": "timeRange open-ended sends no until",
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "timeRange", "args": ["received_timestamp", "2026-01-01T00:00:00Z", ""]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"columns": ["page"], "time_range": {"column": "received_timestamp", "since": "1h"}}
+    "expected_body": {"columns": ["page"], "time_range": {"column": "received_timestamp", "since": "2026-01-01T00:00:00Z"}}
   },
   {
-    "name": "timeRange with since and until",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "timeRange", "args": ["ts", "2026-01-01", "2026-02-01"]}],
+    "name": "timeRange with since and until, nanoseconds, in UTC",
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "timeRange", "args": ["ts", "2026-01-01T07:00:00.123456789-05:00", "2026-02-01T00:00:00Z"]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"columns": ["page"], "time_range": {"column": "ts", "since": "2026-01-01", "until": "2026-02-01"}}
+    "expected_body": {"columns": ["page"], "time_range": {"column": "ts", "since": "2026-01-01T12:00:00.123456789Z", "until": "2026-02-01T00:00:00Z"}}
+  },
+  {
+    "name": "last sends the server's relative duration",
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "last", "args": ["ts", "1h30m"]}],
+    "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
+    "expected_body": {"columns": ["page"], "time_range": {"column": "ts", "since": "1h30m0s"}}
   },
   {
     "name": "complex query combining everything",
-    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "where", "args": ["score", ">", 10]}, {"method": "count", "args": ["*", "total"]}, {"method": "groupBy", "args": ["page"]}, {"method": "orderBy", "args": ["total", "desc"]}, {"method": "limit", "args": [50]}, {"method": "timeRange", "args": ["received_timestamp", "1h", ""]}],
+    "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["page"]}, {"method": "where", "args": ["score", ">", 10]}, {"method": "count", "args": ["*", "total"]}, {"method": "groupBy", "args": ["page"]}, {"method": "orderBy", "args": ["total", "desc"]}, {"method": "limit", "args": [50]}, {"method": "last", "args": ["received_timestamp", "1h"]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"columns": ["page"], "filters": [{"column": "score", "op": "gt", "value": 10}], "aggregations": [{"fn": "count", "column": "*", "alias": "total"}], "group_by": ["page"], "order_by": [{"column": "total", "dir": "desc"}], "limit": 50, "time_range": {"column": "received_timestamp", "since": "1h"}}
+    "expected_body": {"columns": ["page"], "filters": [{"column": "score", "op": "gt", "value": 10}], "aggregations": [{"fn": "count", "column": "*", "alias": "total"}], "group_by": ["page"], "order_by": [{"column": "total", "dir": "desc"}], "limit": 50, "time_range": {"column": "received_timestamp", "since": "1h0m0s"}}
   },
   {
     "name": "table with special characters URL-encodes correctly",

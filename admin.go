@@ -10,7 +10,13 @@ import (
 // Health pings GET /v1/health, which answers 200 with an empty body once the
 // server is past boot and 503 while it is not; nil means 200. It resolves
 // the client's tenant first, so an unknown tenant is a 404 ([ErrNotFound]).
-// It does not check ClickHouse. A read: retried.
+//
+// The endpoint is public: it checks neither the credential nor ClickHouse, so
+// a nil result proves only that the server is up and the tenant exists. A
+// health check for a datasource must go further: call Health, then an
+// authenticated read such as From(table).Limit(1) or [Client.Tables], and map
+// [ErrUnauthorized] and [ErrForbidden] to "bad credential" and "not allowed".
+// See the example. A read: retried.
 func (c *Client) Health(ctx context.Context) error {
 	return c.doJSON(ctx, &request{kind: callRead, method: http.MethodGet, path: "/v1/health"}, nil)
 }
@@ -64,11 +70,12 @@ func (c *Client) Tables(ctx context.Context) ([]TableSchema, error) {
 	return ts, nil
 }
 
-// Table returns one table's schema, from GET /v1/ops/schema?table=name; an
-// unknown table is [ErrNotFound]. Admin role or operator key. A read: retried.
-func (c *Client) Table(ctx context.Context, name string) (*TableSchema, error) {
+// TableSchema returns one table's schema, from GET /v1/ops/schema?table=name;
+// an unknown table is [ErrNotFound]. Admin role or operator key. A read:
+// retried. To query a table, use [Client.From].
+func (c *Client) TableSchema(ctx context.Context, name string) (*TableSchema, error) {
 	if name == "" {
-		return nil, errors.New("wavehouse: Table: empty table name")
+		return nil, errors.New("wavehouse: TableSchema: empty table name")
 	}
 	var t TableSchema
 	r := &request{kind: callRead, method: http.MethodGet, path: "/v1/ops/schema", query: url.Values{"table": {name}}}

@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -139,7 +140,7 @@ func runWireCase(t *testing.T, c *Client, tc wireCase) error {
 		_, err := c.Tables(ctx)
 		return err
 	case "schema_table":
-		_, err := c.Table(ctx, tc.Table)
+		_, err := c.TableSchema(ctx, tc.Table)
 		return err
 	case "schema_refresh":
 		_, err := c.RefreshSchema(ctx)
@@ -196,7 +197,20 @@ func applyOps(t *testing.T, q *Query, ops []wireOp) *Query {
 		case "limit":
 			q = q.Limit(int(op.Args[0].(float64)))
 		case "timeRange":
-			q = q.TimeRange(str(op, 0), str(op, 1), str(op, 2))
+			// RFC 3339 strings; an empty one is the zero time, an open end.
+			parse := func(i int) time.Time {
+				if str(op, i) == "" {
+					return time.Time{}
+				}
+				ts, err := time.Parse(time.RFC3339Nano, str(op, i))
+				require.NoError(t, err)
+				return ts
+			}
+			q = q.TimeRange(str(op, 0), parse(1), parse(2))
+		case "last":
+			d, err := time.ParseDuration(str(op, 1))
+			require.NoError(t, err)
+			q = q.Last(str(op, 0), d)
 		case "count":
 			q = q.Count(str(op, 0), str(op, 1))
 		case "sum":

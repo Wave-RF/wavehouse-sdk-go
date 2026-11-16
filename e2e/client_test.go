@@ -65,8 +65,8 @@ var e2eEventsColumns = []wavehouse.Column{
 func TestSchema(t *testing.T) {
 	c := newClient(t)
 
-	t.Run("Table", func(t *testing.T) {
-		one, err := c.Table(t.Context(), "e2e_events")
+	t.Run("TableSchema", func(t *testing.T) {
+		one, err := c.TableSchema(t.Context(), "e2e_events")
 		require.NoError(t, err)
 		assert.Equal(t, "e2e_events", one.Name)
 		assert.Equal(t, e2eEventsColumns, one.Columns)
@@ -85,7 +85,7 @@ func TestSchema(t *testing.T) {
 	})
 
 	t.Run("unknown table", func(t *testing.T) {
-		_, err := c.Table(t.Context(), "nope")
+		_, err := c.TableSchema(t.Context(), "nope")
 		require.ErrorIs(t, err, wavehouse.ErrNotFound)
 		apiErr, ok := errors.AsType[*wavehouse.APIError](err)
 		require.True(t, ok, "err %v is not an *APIError", err)

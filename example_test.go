@@ -38,6 +38,35 @@ func ExampleWithTokenSource() {
 	_ = wh
 }
 
+// ExampleWithTokenSource_perRequest forwards each caller's own token, as a
+// plugin that runs queries on behalf of signed-in users would: the token source
+// receives the context of the call it authorises, so the caller puts the token
+// in the context and the source reads it back.
+func ExampleWithTokenSource_perRequest() {
+	type tokenKey struct{}
+
+	wh, err := wavehouse.New("https://wavehouse.example.com", wavehouse.WithTokenSource(
+		func(ctx context.Context) (string, error) {
+			tok, ok := ctx.Value(tokenKey{}).(string)
+			if !ok {
+				return "", errors.New("no user token on the request context")
+			}
+			return tok, nil
+		}))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// In a request handler: userToken is the OAuth token the user signed in with.
+	userToken := "token-from-the-incoming-request"
+	ctx := context.WithValue(context.Background(), tokenKey{}, userToken)
+	rows, err := wh.From("clicks").Limit(10).Fetch(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(len(rows))
+}
+
 func ExampleWithOperatorKey() {
 	wh, err := wavehouse.New("http://localhost:8080",
 		wavehouse.WithOperatorKey(os.Getenv("WAVEHOUSE_OPERATOR_KEY")),
@@ -66,6 +95,39 @@ func ExampleClient_WithTenant() {
 	}
 }
 
+// ExampleClient_Health builds a datasource health check. Health alone is not
+// one: the endpoint is public and checks neither the credential nor ClickHouse.
+func ExampleClient_Health() {
+	wh, err := wavehouse.New("http://localhost:8080", wavehouse.WithToken(os.Getenv("WAVEHOUSE_TOKEN")))
+	if err != nil {
+		log.Fatal(err)
+	}
+	check := func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := wh.Health(ctx); err != nil { // the server is up and serves this tenant
+			return fmt.Errorf("server: %w", err)
+		}
+		// An authenticated read proves the credential and the path to ClickHouse.
+		// Use Tables instead for an admin credential, or From(table).Limit(1) with
+		// a table the role may read.
+		_, err := wh.From("clicks").Limit(1).Fetch(ctx)
+		switch {
+		case errors.Is(err, wavehouse.ErrUnauthorized):
+			return errors.New("the credential is missing, expired or invalid")
+		case errors.Is(err, wavehouse.ErrForbidden):
+			return errors.New("the credential is valid but may not read this table")
+		case err != nil:
+			return fmt.Errorf("query: %w", err)
+		}
+		return nil
+	}
+	if err := check(); err != nil {
+		log.Fatal(err)
+	}
+}
+
 func ExampleClient_Version() {
 	wh, err := wavehouse.New("http://localhost:8080")
 	if err != nil {
@@ -78,12 +140,12 @@ func ExampleClient_Version() {
 	fmt.Println(v.Version, v.GitCommit)
 }
 
-func ExampleClient_Table() {
+func ExampleClient_TableSchema() {
 	wh, err := wavehouse.New("http://localhost:8080", wavehouse.WithToken(os.Getenv("WAVEHOUSE_ADMIN_TOKEN")))
 	if err != nil {
 		log.Fatal(err)
 	}
-	t, err := wh.Table(context.Background(), "clicks")
+	t, err := wh.TableSchema(context.Background(), "clicks")
 	if errors.Is(err, wavehouse.ErrNotFound) {
 		fmt.Println("no such table")
 		return
@@ -231,7 +293,12 @@ func ExampleClient_From() {
 		log.Fatal(err)
 	}
 	for _, row := range rows {
-		fmt.Println(row["page"], row["score"])
+		page, _ := row.String("page")
+		score, err := row.Uint64("score") // exact, and an error rather than 0 for NULL
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println(page, score)
 	}
 }
 
@@ -272,7 +339,7 @@ func ExampleQuery_Scan() {
 		Select("page").
 		OrderBy("views", wavehouse.Desc).
 		Limit(10).
-		TimeRange("received_timestamp", "24h", "").
+		Last("received_timestamp", 24*time.Hour).
 		Scan(context.Background(), &top)
 	if err != nil {
 		log.Fatal(err)
@@ -280,6 +347,36 @@ func ExampleQuery_Scan() {
 	for _, r := range top {
 		fmt.Println(r.Page, r.Views)
 	}
+}
+
+func ExampleQuery_Last() {
+	wh, err := wavehouse.New("http://localhost:8080", wavehouse.WithToken(os.Getenv("WAVEHOUSE_TOKEN")))
+	if err != nil {
+		log.Fatal(err)
+	}
+	// "The last hour" is measured on the server's clock; GroupBy selects page for you.
+	rows, err := wh.From("clicks").Last("received_timestamp", time.Hour).Count("*", "").GroupBy("page").Fetch(context.Background())
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, r := range rows {
+		n, _ := r.Uint64("count")
+		fmt.Println(r["page"], n)
+	}
+}
+
+func ExampleQuery_TimeRange() {
+	wh, err := wavehouse.New("http://localhost:8080", wavehouse.WithToken(os.Getenv("WAVEHOUSE_TOKEN")))
+	if err != nil {
+		log.Fatal(err)
+	}
+	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	// A zero end time leaves the window open until now.
+	rows, err := wh.From("clicks").TimeRange("received_timestamp", from, time.Time{}).Limit(100).Fetch(context.Background())
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(len(rows))
 }
 
 func ExampleClient_Pipe() {

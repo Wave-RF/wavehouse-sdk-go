@@ -94,7 +94,7 @@ func TestTenantPlacement(t *testing.T) {
 	}{
 		{"data route", func(c *Client) error { return c.Health(t.Context()) }, "acme", ""},
 		{"ops route", func(c *Client) error { _, err := c.DLQStats(t.Context()); return err }, "", "tenant=acme"},
-		{"ops route with query", func(c *Client) error { _, err := c.Table(t.Context(), "clicks"); return err }, "", "table=clicks&tenant=acme"},
+		{"ops route with query", func(c *Client) error { _, err := c.TableSchema(t.Context(), "clicks"); return err }, "", "table=clicks&tenant=acme"},
 		{"tenant-exempt", func(c *Client) error { _, err := c.Version(t.Context()); return err }, "", ""},
 	}
 	for _, tc := range cases {
