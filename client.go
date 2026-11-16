@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -45,12 +46,14 @@ type Client struct {
 	userAgent   string
 }
 
-// New returns a client for the server at baseURL, an absolute http or https
-// URL with no query or fragment; a path prefix is kept and a trailing slash
-// trimmed. With no options the client is unauthenticated, retries reads up to
+// New returns a client for the server at baseURL, an http or https URL with no
+// query or fragment; a path prefix is kept and a trailing slash trimmed. A
+// baseURL with no scheme gets one: http for a loopback host (localhost,
+// 127.0.0.0/8, ::1, *.localhost), https for any other, and an explicit scheme
+// is never changed. With no options the client is unauthenticated, retries reads up to
 // 3 attempts, and uses an *http.Client with no overall timeout.
 func New(baseURL string, opts ...Option) (*Client, error) {
-	u, err := url.Parse(baseURL)
+	u, err := url.Parse(withScheme(baseURL))
 	switch {
 	case err != nil:
 		return nil, fmt.Errorf("wavehouse: New: base URL: %w", err)
@@ -101,6 +104,46 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 		c.operatorKey = *o.operatorKey
 	}
 	return c, nil
+}
+
+var (
+	schemePrefix  = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*://`)
+	loopbackIPv4  = regexp.MustCompile(`^127(\.[0-9]{1,3}){3}$`)
+	authorityEnds = regexp.MustCompile(`[/?#]`)
+	portSuffix    = regexp.MustCompile(`:[0-9]*$`)
+)
+
+// withScheme gives a scheme-less base URL one, working on the string rather
+// than through url.URL, which would not tell "localhost:8080" from a scheme.
+// The JS SDK applies the same rule, so one input resolves to one base in both.
+func withScheme(in string) string {
+	in = strings.TrimSpace(in)
+	if schemePrefix.MatchString(in) {
+		return in
+	}
+	rest := strings.TrimLeft(in, "/")
+	if rest == "" {
+		return rest
+	}
+	authority := rest
+	if loc := authorityEnds.FindStringIndex(rest); loc != nil {
+		authority = rest[:loc[0]]
+	}
+	if i := strings.LastIndex(authority, "@"); i >= 0 {
+		authority = authority[i+1:]
+	}
+	if authority == "::1" {
+		return "http://[::1]" + rest[len(authority):]
+	}
+	host := portSuffix.ReplaceAllString(authority, "")
+	if strings.HasPrefix(authority, "[") {
+		host = authority[:strings.Index(authority+"]", "]")+1]
+	}
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") || host == "[::1]" || loopbackIPv4.MatchString(host) {
+		return "http://" + rest
+	}
+	return "https://" + rest
 }
 
 // WithTenant returns a copy of c scoped to tenant id, sharing c's connections

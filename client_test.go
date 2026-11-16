@@ -15,13 +15,31 @@ func TestNewBaseURL(t *testing.T) {
 		"http://localhost:8080":       "http://localhost:8080",
 		"https://wh.example.com/":     "https://wh.example.com",
 		"https://example.com/prefix/": "https://example.com/prefix",
+		// A scheme-less URL gets one. The same table is in wavehouse-sdk-js's
+		// url.test.ts: both SDKs must resolve one input to one base.
+		"example.com":                    "https://example.com",
+		"example.com:8080/api/warehouse": "https://example.com:8080/api/warehouse",
+		"HTTPS://X.COM":                  "https://X.COM",
+		"localhost":                      "http://localhost",
+		"localhost:8080":                 "http://localhost:8080",
+		"127.0.0.1:9000/x":               "http://127.0.0.1:9000/x",
+		"127.5.6.7":                      "http://127.5.6.7",
+		"[::1]:8080":                     "http://[::1]:8080",
+		"::1":                            "http://[::1]",
+		"foo.localhost:3000":             "http://foo.localhost:3000",
+		"//example.com/api":              "https://example.com/api",
+		"//localhost:8080":               "http://localhost:8080",
+		"user@host:8080":                 "https://user@host:8080",
+		"  example.com  ":                "https://example.com",
+		"http://lan-host:8080":           "http://lan-host:8080",
+		"http://example.com":             "http://example.com",
 	} {
 		c, err := New(in)
 		if assert.NoError(t, err, in) {
 			assert.Equal(t, want, c.baseURL, in)
 		}
 	}
-	for _, bad := range []string{"", "localhost:8080", "ftp://host", "http://", "http://h/?a=1", "http://h/?", "http://h/#f", "http://h/%zz"} {
+	for _, bad := range []string{"", "   ", "ftp://host", "https://", "http://", "http://h/?a=1", "http://h/?", "http://h/#f", "http://h/%zz"} {
 		_, err := New(bad)
 		assert.Error(t, err, bad)
 	}
