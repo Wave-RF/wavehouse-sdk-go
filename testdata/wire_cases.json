@@ -117,7 +117,7 @@
     "name": "countDistinct aggregation with default alias",
     "endpoint": "query", "table": "clicks", "operations": [{"method": "countDistinct", "args": ["page", ""]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"aggregations": [{"fn": "countDistinct", "column": "page", "alias": "countDistinct_page"}]}
+    "expected_body": {"aggregations": [{"fn": "countDistinct", "column": "page", "alias": "count_distinct_page"}]}
   },
   {
     "name": "custom aggregate function",
@@ -132,10 +132,10 @@
     "expected_body": {"columns": ["page"], "group_by": ["page"]}
   },
   {
-    "name": "select star means select_all",
+    "name": "select star is a column name",
     "endpoint": "query", "table": "clicks", "operations": [{"method": "select", "args": ["*"]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"select_all": true}
+    "expected_body": {"columns": ["*"]}
   },
   {
     "name": "groupBy joins its columns to the selection",
@@ -150,10 +150,10 @@
     "expected_body": {"columns": ["button", "page"], "group_by": ["page"], "aggregations": [{"fn": "sum", "column": "score", "alias": "sum_score"}]}
   },
   {
-    "name": "aggregate default alias is fn_column",
+    "name": "aggregate with no alias sends none",
     "endpoint": "query", "table": "clicks", "operations": [{"method": "aggregate", "args": ["uniqExact", "user_id", ""]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
-    "expected_body": {"aggregations": [{"fn": "uniqExact", "column": "user_id", "alias": "uniqExact_user_id"}]}
+    "expected_body": {"aggregations": [{"fn": "uniqExact", "column": "user_id"}]}
   },
   {
     "name": "orderBy direction is lowercased",

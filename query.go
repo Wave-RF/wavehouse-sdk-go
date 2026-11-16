@@ -64,7 +64,7 @@ type Query struct {
 type aggregation struct {
 	Fn     string `json:"fn"`
 	Column string `json:"column"`
-	Alias  string `json:"alias"`
+	Alias  string `json:"alias,omitempty"`
 }
 
 type filter struct {
@@ -123,8 +123,8 @@ func (q *Query) checkNames(call string, names ...string) {
 }
 
 // Select adds columns to the projection; calls accumulate. With no Select,
-// SelectAll or aggregate, the query selects every column. A lone "*" means
-// [Query.SelectAll]; "*" next to other columns is an error from Scan or Fetch.
+// SelectAll or aggregate, the query selects every column. "*" is a column
+// name, not a wildcard; use [Query.SelectAll] for every readable column.
 func (q *Query) Select(columns ...string) *Query {
 	return q.with(func(q *Query) {
 		q.checkNames("Select", columns...)
@@ -230,44 +230,54 @@ func (q *Query) Last(column string, d time.Duration) *Query {
 	})
 }
 
-// Count adds count(column) AS alias; column "*" counts rows. For the default
-// alias of an empty alias, see [Query.Aggregate].
-func (q *Query) Count(column, alias string) *Query { return q.Aggregate("count", column, alias) }
+// Count adds count(column) AS alias; column "*" counts rows. An empty alias is
+// "count", whatever the column.
+func (q *Query) Count(column, alias string) *Query {
+	return q.Aggregate("count", column, orDefault(alias, "count"))
+}
 
-// Sum adds sum(column) AS alias; see [Query.Aggregate] for the default alias.
-func (q *Query) Sum(column, alias string) *Query { return q.Aggregate("sum", column, alias) }
+// Sum adds sum(column) AS alias; an empty alias is "sum_<column>".
+func (q *Query) Sum(column, alias string) *Query {
+	return q.Aggregate("sum", column, orDefault(alias, "sum_"+column))
+}
 
-// Avg adds avg(column) AS alias; see [Query.Aggregate] for the default alias.
-func (q *Query) Avg(column, alias string) *Query { return q.Aggregate("avg", column, alias) }
+// Avg adds avg(column) AS alias; an empty alias is "avg_<column>".
+func (q *Query) Avg(column, alias string) *Query {
+	return q.Aggregate("avg", column, orDefault(alias, "avg_"+column))
+}
 
-// Min adds min(column) AS alias; see [Query.Aggregate] for the default alias.
-func (q *Query) Min(column, alias string) *Query { return q.Aggregate("min", column, alias) }
+// Min adds min(column) AS alias; an empty alias is "min_<column>".
+func (q *Query) Min(column, alias string) *Query {
+	return q.Aggregate("min", column, orDefault(alias, "min_"+column))
+}
 
-// Max adds max(column) AS alias; see [Query.Aggregate] for the default alias.
-func (q *Query) Max(column, alias string) *Query { return q.Aggregate("max", column, alias) }
+// Max adds max(column) AS alias; an empty alias is "max_<column>".
+func (q *Query) Max(column, alias string) *Query {
+	return q.Aggregate("max", column, orDefault(alias, "max_"+column))
+}
 
-// CountDistinct adds countDistinct(column) AS alias; see [Query.Aggregate] for
-// the default alias.
+// CountDistinct adds countDistinct(column) AS alias; an empty alias is
+// "count_distinct_<column>".
 func (q *Query) CountDistinct(column, alias string) *Query {
-	return q.Aggregate("countDistinct", column, alias)
+	return q.Aggregate("countDistinct", column, orDefault(alias, "count_distinct_"+column))
+}
+
+func orDefault(alias, def string) string {
+	if alias == "" {
+		return def
+	}
+	return alias
 }
 
 // Aggregate adds fn(column) AS alias for any aggregate function the server
-// allows, such as "uniqExact". An empty alias is "<fn>_<column>" ("sum_score",
-// "uniqExact_user_id"), and "<fn>" alone for column "*", so Count("*", "") is
-// "count". Every aggregate helper follows this one rule.
+// allows, such as "uniqExact". An empty alias sends none, and the server names
+// the result column.
 func (q *Query) Aggregate(fn, column, alias string) *Query {
 	return q.with(func(q *Query) {
 		if fn == "" {
 			q.fail("Aggregate: empty function name")
 		}
 		q.checkNames("Aggregate", column)
-		if alias == "" {
-			alias = fn
-			if column != "*" {
-				alias += "_" + column
-			}
-		}
 		q.aggs = append(q.aggs, aggregation{Fn: fn, Column: column, Alias: alias})
 	})
 }
@@ -285,12 +295,6 @@ func (q *Query) body() (*queryBody, error) {
 		return nil, fmt.Errorf("wavehouse: query on %q: %w", q.table, q.err)
 	}
 	columns, all := q.columns, q.selectAll
-	if slices.Contains(columns, "*") {
-		if len(columns) > 1 {
-			return nil, fmt.Errorf("wavehouse: query on %q: Select(\"*\") can't be combined with other columns; use SelectAll, or name the columns", q.table)
-		}
-		columns, all = nil, true
-	}
 	if all && (len(columns) > 0 || len(q.aggs) > 0) {
 		return nil, fmt.Errorf("wavehouse: query on %q: SelectAll can't be combined with Select columns or aggregates", q.table)
 	}

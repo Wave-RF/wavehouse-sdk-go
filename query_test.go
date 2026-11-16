@@ -49,8 +49,8 @@ func TestQueryProjection(t *testing.T) {
 			map[string]any{"aggregations": []any{map[string]any{"fn": "count", "column": "*", "alias": "n"}}},
 		},
 		"explicit SelectAll": {func(c *Client) *Query { return c.From("t").SelectAll() }, map[string]any{"select_all": true}},
-		"lone star is select_all": {
-			func(c *Client) *Query { return c.From("t").Select("*") }, map[string]any{"select_all": true},
+		"star is a column name": {
+			func(c *Client) *Query { return c.From("t").Select("*") }, map[string]any{"columns": []any{"*"}},
 		},
 		"group by key joins the columns": {
 			func(c *Client) *Query { return c.From("t").Count("*", "n").GroupBy("g") },
@@ -108,12 +108,18 @@ func TestQueryAggregates(t *testing.T) {
 		Sum("a", "total").Aggregate("uniqExact", "u", "").Aggregate("sum", "*", "").GroupBy("g", "h")
 	_, err := q.Fetch(t.Context())
 	require.NoError(t, err)
-	agg := func(fn, col, alias string) any { return map[string]any{"fn": fn, "column": col, "alias": alias} }
+	agg := func(fn, col, alias string) any {
+		m := map[string]any{"fn": fn, "column": col}
+		if alias != "" {
+			m["alias"] = alias // an empty alias is left off the wire
+		}
+		return m
+	}
 	body := sentBody(t, rec)
 	assert.Equal(t, []any{
 		agg("count", "*", "count"), agg("sum", "a", "sum_a"), agg("avg", "b", "avg_b"),
-		agg("min", "c", "min_c"), agg("max", "d", "max_d"), agg("countDistinct", "e", "countDistinct_e"),
-		agg("sum", "a", "total"), agg("uniqExact", "u", "uniqExact_u"), agg("sum", "*", "sum"),
+		agg("min", "c", "min_c"), agg("max", "d", "max_d"), agg("countDistinct", "e", "count_distinct_e"),
+		agg("sum", "a", "total"), agg("uniqExact", "u", ""), agg("sum", "*", ""),
 	}, body["aggregations"])
 	assert.Equal(t, []any{"g", "h"}, body["group_by"])
 	assert.Equal(t, []any{"g", "h"}, body["columns"], "the keys are selected")
@@ -199,9 +205,6 @@ func TestQueryMisuse(t *testing.T) {
 		"In with nil":                {c.From("t").Where("a", In, nil), "non-empty slice"},
 		"In with an empty slice":     {c.From("t").Where("a", In, []int{}), "non-empty slice"},
 		"unknown dir":                {c.From("t").OrderBy("a", "up"), "unknown direction"},
-		"star with columns":          {c.From("t").Select("*", "a"), `Select("*") can't be combined`},
-		"star after columns":         {c.From("t").Select("a").Select("*"), `Select("*") can't be combined`},
-		"star with aggregates":       {c.From("t").Select("*").Count("*", ""), "SelectAll can't be combined"},
 		"empty aggregate column":     {c.From("t").Sum("", ""), "Aggregate: empty column name"},
 		"empty aggregate fn":         {c.From("t").Aggregate("", "a", ""), "empty function name"},
 		"negative limit":             {c.From("t").Limit(-1), "negative limit"},

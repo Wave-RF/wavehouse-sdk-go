@@ -176,8 +176,8 @@ func TestQuery(t *testing.T) {
 		assert.Equal(t, uint64(5), n)
 	})
 
-	t.Run("select star", func(t *testing.T) {
-		rows, err := events().Select("*").Limit(1).Fetch(t.Context())
+	t.Run("select all", func(t *testing.T) {
+		rows, err := events().SelectAll().Limit(1).Fetch(t.Context())
 		require.NoError(t, err)
 		require.Len(t, rows, 1)
 		assert.Equal(t, []string{"event_id", "name", "ts", "value"}, sortedKeys(rows[0]))
