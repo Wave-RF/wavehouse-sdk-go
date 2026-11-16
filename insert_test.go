@@ -222,3 +222,28 @@ func TestInsertRetriesTransportErrors(t *testing.T) {
 		assert.Equal(t, []string{`{"a":1}`, `{"a":1}`}, bodies)
 	})
 }
+
+func TestInsertRefusesReadState(t *testing.T) {
+	rec := newRecorder(t, reply(200, `{"total":1,"succeeded":1}`))
+	c := rec.client(t)
+	for name, q := range map[string]*Query{
+		"select":     c.From("t").Select("a"),
+		"select all": c.From("t").SelectAll(),
+		"where":      c.From("t").Where("a", Eq, 1),
+		"order":      c.From("t").OrderBy("a", Asc),
+		"group":      c.From("t").GroupBy("a"),
+		"limit":      c.From("t").Limit(5),
+		"time range": c.From("t").Last("ts", time.Hour),
+		"aggregate":  c.From("t").Count("*", ""),
+	} {
+		_, err := q.Insert(t.Context(), map[string]any{"a": 1})
+		require.ErrorContains(t, err, "read state", name)
+		_, err = q.InsertNDJSON(t.Context(), strings.NewReader(`{"a":1}`))
+		require.ErrorContains(t, err, "read state", name)
+	}
+	assert.Empty(t, rec.requests())
+
+	// An empty Select() is no state.
+	_, err := c.From("t").Select().Insert(t.Context(), map[string]any{"a": 1})
+	require.NoError(t, err)
+}

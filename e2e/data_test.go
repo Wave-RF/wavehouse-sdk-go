@@ -166,11 +166,30 @@ func TestQuery(t *testing.T) {
 		assert.InDelta(t, 5, out[0].Top, 0)
 	})
 
-	t.Run("group by", func(t *testing.T) {
-		rows, err := events().Select("name").Count("*", "n").GroupBy("name").Fetch(t.Context())
+	t.Run("group by returns the key without selecting it", func(t *testing.T) {
+		rows, err := events().Count("*", "").GroupBy("name").Fetch(t.Context())
 		require.NoError(t, err)
 		require.Len(t, rows, 1)
-		assert.Equal(t, json.Number("5"), rows[0]["n"])
+		assert.Equal(t, name, rows[0]["name"])
+		n, err := rows[0].Uint64("count")
+		require.NoError(t, err)
+		assert.Equal(t, uint64(5), n)
+	})
+
+	t.Run("select star", func(t *testing.T) {
+		rows, err := events().Select("*").Limit(1).Fetch(t.Context())
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		assert.Equal(t, []string{"event_id", "name", "ts", "value"}, sortedKeys(rows[0]))
+	})
+
+	t.Run("op and dir spellings", func(t *testing.T) {
+		rows, err := events().Where("value", wavehouse.In, []int{1, 2}).OrderBy("value", "DESC").Select("value").Fetch(t.Context())
+		require.NoError(t, err)
+		require.Len(t, rows, 2)
+		v, err := rows[0].Float64("value")
+		require.NoError(t, err)
+		assert.InDelta(t, 2, v, 0)
 	})
 
 	t.Run("filters", func(t *testing.T) {
@@ -187,12 +206,25 @@ func TestQuery(t *testing.T) {
 	})
 
 	t.Run("time range", func(t *testing.T) {
-		rows, err := events().TimeRange("ts", "1h", "").Fetch(t.Context())
+		now := time.Now()
+		rows, err := events().TimeRange("ts", now.Add(-time.Hour), time.Time{}).Fetch(t.Context())
+		require.NoError(t, err)
+		assert.Len(t, rows, 5, "open-ended from an hour ago")
+		rows, err = events().TimeRange("ts", now.Add(-2*time.Hour), now.Add(-time.Hour)).Fetch(t.Context())
+		require.NoError(t, err)
+		assert.Empty(t, rows, "a closed window before the rows")
+		rows, err = events().TimeRange("ts", now.Add(-time.Hour), now.Add(time.Hour)).Fetch(t.Context())
+		require.NoError(t, err)
+		assert.Len(t, rows, 5, "a closed window around them")
+	})
+
+	t.Run("last", func(t *testing.T) {
+		rows, err := events().Last("ts", time.Hour).Fetch(t.Context())
 		require.NoError(t, err)
 		assert.Len(t, rows, 5)
-		rows, err = events().TimeRange("ts", "2h", "1h").Fetch(t.Context())
+		rows, err = events().Last("ts", 36*time.Hour).Fetch(t.Context())
 		require.NoError(t, err)
-		assert.Empty(t, rows)
+		assert.Len(t, rows, 5, "a duration over a day, which the server's relative form must take")
 	})
 
 	t.Run("limit", func(t *testing.T) {
@@ -242,6 +274,57 @@ func TestQueryNumbers(t *testing.T) {
 	fetched, err := c.From("e2e_numbers").Where("event_id", wavehouse.Eq, id).Select("big").Fetch(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, json.Number("18446744073709551615"), fetched[0]["big"])
+}
+
+// TestRowAccessors reads a real UInt64, Int64, Decimal and DateTime64 through Row.
+func TestRowAccessors(t *testing.T) {
+	c := newClient(t)
+	id := uniqueName(t)
+	const price = "12345678901234567.0123456789"
+	_, err := c.From("e2e_numbers").Insert(t.Context(), map[string]any{
+		"event_id": id, "big": uint64(math.MaxUint64), "signed": int64(math.MinInt64), "price": price,
+	})
+	require.NoError(t, err)
+	var row wavehouse.Row
+	require.Eventually(t, func() bool {
+		rows, err := c.From("e2e_numbers").Where("event_id", wavehouse.Eq, id).Select("big", "signed", "price").Fetch(t.Context())
+		if err != nil || len(rows) != 1 {
+			return false
+		}
+		row = rows[0]
+		return true
+	}, 30*time.Second, 200*time.Millisecond)
+
+	big, err := row.Uint64("big")
+	require.NoError(t, err)
+	assert.Equal(t, uint64(math.MaxUint64), big)
+	signed, err := row.Int64("signed")
+	require.NoError(t, err)
+	assert.Equal(t, int64(math.MinInt64), signed)
+	dec, err := row.String("price")
+	require.NoError(t, err)
+	assert.Equal(t, price, dec)
+	f, err := row.Float64("price")
+	require.NoError(t, err)
+	assert.InDelta(t, 1.2345678901234567e16, f, 4)
+	_, err = row.Int64("big")
+	require.ErrorContains(t, err, `"big"`, "UInt64 max does not fit an int64")
+	_, err = row.Time("nope")
+	require.ErrorContains(t, err, `"nope"`)
+
+	name := seedEvents(t, c, 1)
+	ev, err := c.From("e2e_events").Where("name", wavehouse.Eq, name).Select("ts", "value").Fetch(t.Context())
+	require.NoError(t, err)
+	require.Len(t, ev, 1)
+	ts, err := ev[0].Time("ts") // a DateTime64(3)
+	require.NoError(t, err, "wire value %#v", ev[0]["ts"])
+	assert.WithinDuration(t, time.Now(), ts, 5*time.Minute)
+}
+
+func TestInsertRefusesReadState(t *testing.T) {
+	c := newClient(t)
+	_, err := c.From("e2e_events").Limit(1).Insert(t.Context(), eventRow("x", 1))
+	require.ErrorContains(t, err, "read state")
 }
 
 func sortedKeys(r wavehouse.Row) []string {

@@ -79,7 +79,9 @@ func (c *Client) From(table string) *Query {
 // The server answers 200 even when records are rejected: those come back as
 // an [*InsertError] together with the result, so check both. A body over
 // 16 MiB, the server's limit, is refused before it is sent; split the batch.
-// Insert ignores any query state on q beyond its table.
+// Insert is for a bare [Client.From]: a query that carries any read state
+// (Select, Where, OrderBy, GroupBy, Limit, a time range or an aggregate) is an
+// error, returned before anything is sent.
 //
 // Ingest is at-least-once: a failed attempt is retried, and where the server
 // has dedupe configured an id field makes the retry exactly-once, reported in
@@ -87,6 +89,9 @@ func (c *Client) From(table string) *Query {
 func (q *Query) Insert(ctx context.Context, rows any) (*InsertResult, error) {
 	if q.table == "" {
 		return nil, errors.New("wavehouse: Insert: empty table name")
+	}
+	if err := q.checkInsert("Insert"); err != nil {
+		return nil, err
 	}
 	body, n, err := encodeNDJSON(rows)
 	if err != nil {
@@ -100,12 +105,15 @@ func (q *Query) Insert(ctx context.Context, rows any) (*InsertResult, error) {
 
 // InsertNDJSON sends a body that is already newline-delimited JSON, one
 // object per line, as POST /v1/ingest?table= with the same result and errors
-// as [Query.Insert]. The reader is read to its end and buffered, up to the
+// as [Query.Insert], and the same refusal of a query with read state. The reader is read to its end and buffered, up to the
 // server's 16 MiB limit, so a retry resends the same bytes. A body with no
 // non-blank content sends nothing and returns a zero result.
 func (q *Query) InsertNDJSON(ctx context.Context, r io.Reader) (*InsertResult, error) {
 	if q.table == "" {
 		return nil, errors.New("wavehouse: InsertNDJSON: empty table name")
+	}
+	if err := q.checkInsert("InsertNDJSON"); err != nil {
+		return nil, err
 	}
 	body, err := io.ReadAll(io.LimitReader(r, maxIngestBody+1))
 	if err != nil {
@@ -118,6 +126,15 @@ func (q *Query) InsertNDJSON(ctx context.Context, r io.Reader) (*InsertResult, e
 		return &InsertResult{}, nil
 	}
 	return q.ingest(ctx, body)
+}
+
+// checkInsert refuses a query that carries read state: the server's ingest
+// ignores it, so the caller's intent would be silently dropped.
+func (q *Query) checkInsert(call string) error {
+	if q.hasReadState() {
+		return fmt.Errorf("wavehouse: %s on %q: the query carries read state (select, where, order, group, limit, time range or aggregates), which an insert ignores; call it on a bare From(table)", call, q.table)
+	}
+	return nil
 }
 
 func errBodyTooLarge(call string) error {

@@ -9,12 +9,9 @@ import (
 	"net/url"
 	"reflect"
 	"slices"
+	"strings"
+	"time"
 )
-
-// Row is one result row with its columns by name. Numbers are
-// [encoding/json.Number], so 64-bit integers stay exact; a Decimal column is
-// a string, as the server renders it.
-type Row = map[string]any
 
 // Op is a filter operator, spelled as the server expects it.
 type Op string
@@ -30,6 +27,8 @@ const (
 	In   Op = "in"   // value is a slice
 	Like Op = "like" // SQL LIKE pattern
 )
+
+var allOps = []Op{Eq, Neq, Gt, Gte, Lt, Lte, In, Like}
 
 // Dir is a sort direction.
 type Dir string
@@ -124,7 +123,8 @@ func (q *Query) checkNames(call string, names ...string) {
 }
 
 // Select adds columns to the projection; calls accumulate. With no Select,
-// SelectAll or aggregate, the query selects every column.
+// SelectAll or aggregate, the query selects every column. A lone "*" means
+// [Query.SelectAll]; "*" next to other columns is an error from Scan or Fetch.
 func (q *Query) Select(columns ...string) *Query {
 	return q.with(func(q *Query) {
 		q.checkNames("Select", columns...)
@@ -139,28 +139,45 @@ func (q *Query) SelectAll() *Query {
 	return q.with(func(q *Query) { q.selectAll = true })
 }
 
-// Where adds a filter. Filters accumulate and are ANDed. For [In], value is
-// a slice; values are JSON-encoded, so a time.Time is RFC 3339.
+// Where adds a filter. Filters accumulate and are ANDed. op must be one of the
+// eight [Op] constants, and for [In] value must be a non-empty slice; Scan and
+// Fetch report anything else. Values are JSON-encoded, so a time.Time is
+// RFC 3339.
 func (q *Query) Where(column string, op Op, value any) *Query {
 	return q.with(func(q *Query) {
 		q.checkNames("Where", column)
+		if !slices.Contains(allOps, op) {
+			q.fail("Where: unknown operator %q on column %q; use one of the Op constants (Eq, Neq, Gt, Gte, Lt, Lte, In, Like)", op, column)
+		} else if op == In {
+			if v := reflect.ValueOf(value); v.Kind() != reflect.Slice || v.Len() == 0 {
+				q.fail("Where: In on column %q needs a non-empty slice, got %T", column, value)
+			}
+		}
 		q.filters = append(q.filters, filter{Column: column, Op: op, Value: value})
 	})
 }
 
 // OrderBy adds a sort key. column may be a table column or an aggregate's
-// alias. An empty dir sorts ascending.
+// alias. An empty dir sorts ascending; "DESC" and "Asc" are accepted and
+// normalised, and any other dir is an error from Scan or Fetch.
 func (q *Query) OrderBy(column string, dir Dir) *Query {
 	return q.with(func(q *Query) {
 		q.checkNames("OrderBy", column)
-		if dir == "" {
+		switch d := Dir(strings.ToLower(string(dir))); d {
+		case "":
 			dir = Asc
+		case Asc, Desc:
+			dir = d
+		default:
+			q.fail("OrderBy: unknown direction %q on column %q; use Asc or Desc", dir, column)
 		}
 		q.orderBy = append(q.orderBy, orderClause{Column: column, Dir: dir})
 	})
 }
 
-// GroupBy adds GROUP BY columns; calls accumulate.
+// GroupBy adds GROUP BY columns; calls accumulate. The columns are selected
+// too, unless a Select already names them, because the server returns a group
+// key only when it is selected.
 func (q *Query) GroupBy(columns ...string) *Query {
 	return q.with(func(q *Query) {
 		q.checkNames("GroupBy", columns...)
@@ -180,67 +197,86 @@ func (q *Query) Limit(n int) *Query {
 	})
 }
 
-// TimeRange restricts column to a window. since and until are RFC 3339
-// timestamps or relative durations meaning that long ago ("1h", "30m", "7d",
-// "2w"); an empty until means now. The server applies the window only when
-// since is set.
-func (q *Query) TimeRange(column, since, until string) *Query {
+// TimeRange restricts column to the window from, until to, in UTC with
+// nanosecond precision. A zero to leaves the window open at the end, meaning
+// now, and no until is sent; a zero from is an error from Scan or Fetch (use
+// [Query.Last] for a window ending now). A later TimeRange or Last replaces
+// this one.
+func (q *Query) TimeRange(column string, from, to time.Time) *Query {
 	return q.with(func(q *Query) {
 		q.checkNames("TimeRange", column)
-		q.timeRange = &timeRange{Column: column, Since: since, Until: until}
+		if from.IsZero() {
+			q.fail("TimeRange: zero from time; use Last for a window ending now")
+		}
+		tr := &timeRange{Column: column, Since: from.UTC().Format(time.RFC3339Nano)}
+		if !to.IsZero() {
+			tr.Until = to.UTC().Format(time.RFC3339Nano)
+		}
+		q.timeRange = tr
 	})
 }
 
-// Count adds count(column) AS alias; column "*" counts rows. An empty alias
-// is "count".
-func (q *Query) Count(column, alias string) *Query {
-	return q.aggregate("count", "count", column, alias)
+// Last restricts column to the last d, up to now on the server's clock, so a
+// client with a skewed clock still gets the right window. d must be positive.
+// It is sent as the server's relative form (d as a Go duration such as
+// "1h30m0s", meaning that long ago). A later Last or TimeRange replaces it.
+func (q *Query) Last(column string, d time.Duration) *Query {
+	return q.with(func(q *Query) {
+		q.checkNames("Last", column)
+		if d <= 0 {
+			q.fail("Last: duration %v must be positive", d)
+		}
+		q.timeRange = &timeRange{Column: column, Since: d.String()}
+	})
 }
 
-// Sum adds sum(column) AS alias; an empty alias is "sum_<column>".
-func (q *Query) Sum(column, alias string) *Query {
-	return q.aggregate("sum", "sum_"+column, column, alias)
-}
+// Count adds count(column) AS alias; column "*" counts rows. For the default
+// alias of an empty alias, see [Query.Aggregate].
+func (q *Query) Count(column, alias string) *Query { return q.Aggregate("count", column, alias) }
 
-// Avg adds avg(column) AS alias; an empty alias is "avg_<column>".
-func (q *Query) Avg(column, alias string) *Query {
-	return q.aggregate("avg", "avg_"+column, column, alias)
-}
+// Sum adds sum(column) AS alias; see [Query.Aggregate] for the default alias.
+func (q *Query) Sum(column, alias string) *Query { return q.Aggregate("sum", column, alias) }
 
-// Min adds min(column) AS alias; an empty alias is "min_<column>".
-func (q *Query) Min(column, alias string) *Query {
-	return q.aggregate("min", "min_"+column, column, alias)
-}
+// Avg adds avg(column) AS alias; see [Query.Aggregate] for the default alias.
+func (q *Query) Avg(column, alias string) *Query { return q.Aggregate("avg", column, alias) }
 
-// Max adds max(column) AS alias; an empty alias is "max_<column>".
-func (q *Query) Max(column, alias string) *Query {
-	return q.aggregate("max", "max_"+column, column, alias)
-}
+// Min adds min(column) AS alias; see [Query.Aggregate] for the default alias.
+func (q *Query) Min(column, alias string) *Query { return q.Aggregate("min", column, alias) }
 
-// CountDistinct adds countDistinct(column) AS alias; an empty alias is
-// "count_distinct_<column>".
+// Max adds max(column) AS alias; see [Query.Aggregate] for the default alias.
+func (q *Query) Max(column, alias string) *Query { return q.Aggregate("max", column, alias) }
+
+// CountDistinct adds countDistinct(column) AS alias; see [Query.Aggregate] for
+// the default alias.
 func (q *Query) CountDistinct(column, alias string) *Query {
-	return q.aggregate("countDistinct", "count_distinct_"+column, column, alias)
+	return q.Aggregate("countDistinct", column, alias)
 }
 
 // Aggregate adds fn(column) AS alias for any aggregate function the server
-// allows, such as "uniqExact". An empty alias leaves the result column named
-// by ClickHouse.
+// allows, such as "uniqExact". An empty alias is "<fn>_<column>" ("sum_score",
+// "uniqExact_user_id"), and "<fn>" alone for column "*", so Count("*", "") is
+// "count". Every aggregate helper follows this one rule.
 func (q *Query) Aggregate(fn, column, alias string) *Query {
 	return q.with(func(q *Query) {
 		if fn == "" {
 			q.fail("Aggregate: empty function name")
 		}
 		q.checkNames("Aggregate", column)
+		if alias == "" {
+			alias = fn
+			if column != "*" {
+				alias += "_" + column
+			}
+		}
 		q.aggs = append(q.aggs, aggregation{Fn: fn, Column: column, Alias: alias})
 	})
 }
 
-func (q *Query) aggregate(fn, defaultAlias, column, alias string) *Query {
-	if alias == "" {
-		alias = defaultAlias
-	}
-	return q.Aggregate(fn, column, alias)
+// hasReadState reports whether q carries anything a read would send, which an
+// insert can't use.
+func (q *Query) hasReadState() bool {
+	return len(q.columns) > 0 || q.selectAll || len(q.aggs) > 0 || len(q.filters) > 0 ||
+		len(q.groupBy) > 0 || len(q.orderBy) > 0 || q.limit != 0 || q.timeRange != nil
 }
 
 // body validates q and returns its wire form.
@@ -248,12 +284,28 @@ func (q *Query) body() (*queryBody, error) {
 	if q.err != nil {
 		return nil, fmt.Errorf("wavehouse: query on %q: %w", q.table, q.err)
 	}
-	if q.selectAll && (len(q.columns) > 0 || len(q.aggs) > 0) {
+	columns, all := q.columns, q.selectAll
+	if slices.Contains(columns, "*") {
+		if len(columns) > 1 {
+			return nil, fmt.Errorf("wavehouse: query on %q: Select(\"*\") can't be combined with other columns; use SelectAll, or name the columns", q.table)
+		}
+		columns, all = nil, true
+	}
+	if all && (len(columns) > 0 || len(q.aggs) > 0) {
 		return nil, fmt.Errorf("wavehouse: query on %q: SelectAll can't be combined with Select columns or aggregates", q.table)
 	}
+	if !all {
+		// The server returns a group key only when it is selected.
+		columns = slices.Clone(columns)
+		for _, g := range q.groupBy {
+			if !slices.Contains(columns, g) {
+				columns = append(columns, g)
+			}
+		}
+	}
 	return &queryBody{
-		Columns:      q.columns,
-		SelectAll:    q.selectAll || (len(q.columns) == 0 && len(q.aggs) == 0),
+		Columns:      columns,
+		SelectAll:    all || (len(columns) == 0 && len(q.aggs) == 0),
 		Aggregations: q.aggs,
 		Filters:      q.filters,
 		GroupBy:      q.groupBy,
@@ -301,8 +353,8 @@ func (q *Query) Scan(ctx context.Context, dst any) error {
 	return q.c.doJSON(ctx, r, dst)
 }
 
-// Fetch runs the query and returns the rows as maps; numbers are
-// [encoding/json.Number]. Use [Query.Scan] for typed rows.
+// Fetch runs the query and returns the rows as [Row]s, whose accessors read
+// the typed values. Use [Query.Scan] to decode into structs.
 func (q *Query) Fetch(ctx context.Context) ([]Row, error) {
 	var rows []Row
 	if err := q.Scan(ctx, &rows); err != nil {

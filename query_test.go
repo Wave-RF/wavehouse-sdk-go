@@ -49,6 +49,25 @@ func TestQueryProjection(t *testing.T) {
 			map[string]any{"aggregations": []any{map[string]any{"fn": "count", "column": "*", "alias": "n"}}},
 		},
 		"explicit SelectAll": {func(c *Client) *Query { return c.From("t").SelectAll() }, map[string]any{"select_all": true}},
+		"lone star is select_all": {
+			func(c *Client) *Query { return c.From("t").Select("*") }, map[string]any{"select_all": true},
+		},
+		"group by key joins the columns": {
+			func(c *Client) *Query { return c.From("t").Count("*", "n").GroupBy("g") },
+			map[string]any{
+				"columns":      []any{"g"},
+				"group_by":     []any{"g"},
+				"aggregations": []any{map[string]any{"fn": "count", "column": "*", "alias": "n"}},
+			},
+		},
+		"group by key already selected": {
+			func(c *Client) *Query { return c.From("t").Select("a", "g").Count("*", "n").GroupBy("g", "h") },
+			map[string]any{
+				"columns":      []any{"a", "g", "h"},
+				"group_by":     []any{"g", "h"},
+				"aggregations": []any{map[string]any{"fn": "count", "column": "*", "alias": "n"}},
+			},
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -65,11 +84,16 @@ func TestQueryOpAndDirSpellings(t *testing.T) {
 		Eq: "eq", Neq: "neq", Gt: "gt", Gte: "gte", Lt: "lt", Lte: "lte", In: "in", Like: "like",
 	} {
 		rec := newRecorder(t, reply(200, `[]`))
-		_, err := rec.client(t).From("t").Where("x", op, 1).Fetch(t.Context())
+		var value any = 1
+		wantValue := any(float64(1))
+		if op == In {
+			value, wantValue = []int{1}, []any{float64(1)}
+		}
+		_, err := rec.client(t).From("t").Where("x", op, value).Fetch(t.Context())
 		require.NoError(t, err)
-		assert.Equal(t, []any{map[string]any{"column": "x", "op": want, "value": float64(1)}}, sentBody(t, rec)["filters"], op)
+		assert.Equal(t, []any{map[string]any{"column": "x", "op": want, "value": wantValue}}, sentBody(t, rec)["filters"], op)
 	}
-	for dir, want := range map[Dir]string{Asc: "asc", Desc: "desc", "": "asc"} {
+	for dir, want := range map[Dir]string{Asc: "asc", Desc: "desc", "": "asc", "DESC": "desc", "Asc": "asc"} {
 		rec := newRecorder(t, reply(200, `[]`))
 		_, err := rec.client(t).From("t").OrderBy("x", dir).Fetch(t.Context())
 		require.NoError(t, err)
@@ -81,17 +105,18 @@ func TestQueryAggregates(t *testing.T) {
 	rec := newRecorder(t, reply(200, `[]`))
 	q := rec.client(t).From("t").
 		Count("*", "").Sum("a", "").Avg("b", "").Min("c", "").Max("d", "").CountDistinct("e", "").
-		Sum("a", "total").Aggregate("uniqExact", "u", "").GroupBy("g", "h")
+		Sum("a", "total").Aggregate("uniqExact", "u", "").Aggregate("sum", "*", "").GroupBy("g", "h")
 	_, err := q.Fetch(t.Context())
 	require.NoError(t, err)
 	agg := func(fn, col, alias string) any { return map[string]any{"fn": fn, "column": col, "alias": alias} }
 	body := sentBody(t, rec)
 	assert.Equal(t, []any{
 		agg("count", "*", "count"), agg("sum", "a", "sum_a"), agg("avg", "b", "avg_b"),
-		agg("min", "c", "min_c"), agg("max", "d", "max_d"), agg("countDistinct", "e", "count_distinct_e"),
-		agg("sum", "a", "total"), agg("uniqExact", "u", ""),
+		agg("min", "c", "min_c"), agg("max", "d", "max_d"), agg("countDistinct", "e", "countDistinct_e"),
+		agg("sum", "a", "total"), agg("uniqExact", "u", "uniqExact_u"), agg("sum", "*", "sum"),
 	}, body["aggregations"])
 	assert.Equal(t, []any{"g", "h"}, body["group_by"])
+	assert.Equal(t, []any{"g", "h"}, body["columns"], "the keys are selected")
 }
 
 func TestQueryTimeRangeLimitFilters(t *testing.T) {
@@ -99,7 +124,7 @@ func TestQueryTimeRangeLimitFilters(t *testing.T) {
 	ts := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	_, err := rec.client(t).From("t").
 		Where("a", In, []string{"x", "y"}).Where("b", Gte, ts).Where("c", Like, "p%").
-		TimeRange("ts", "1h", "").Limit(50).Fetch(t.Context())
+		Last("ts", time.Hour).Limit(50).Fetch(t.Context())
 	require.NoError(t, err)
 	body := sentBody(t, rec)
 	assert.Equal(t, []any{
@@ -107,12 +132,23 @@ func TestQueryTimeRangeLimitFilters(t *testing.T) {
 		map[string]any{"column": "b", "op": "gte", "value": "2026-01-02T03:04:05Z"},
 		map[string]any{"column": "c", "op": "like", "value": "p%"},
 	}, body["filters"])
-	assert.Equal(t, map[string]any{"column": "ts", "since": "1h"}, body["time_range"])
+	assert.Equal(t, map[string]any{"column": "ts", "since": "1h0m0s"}, body["time_range"])
 	assert.InDelta(t, 50, body["limit"], 0)
 
-	_, err = rec.client(t).From("t").TimeRange("ts", "2026-01-01", "2026-02-01").Fetch(t.Context())
+	// Any zone is sent as UTC, with nanoseconds; a zero end sends no until.
+	est := time.FixedZone("est", -5*3600)
+	from := time.Date(2026, 1, 1, 7, 0, 0, 123456789, est)
+	_, err = rec.client(t).From("t").TimeRange("ts", from, time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)).Fetch(t.Context())
 	require.NoError(t, err)
-	assert.Equal(t, map[string]any{"column": "ts", "since": "2026-01-01", "until": "2026-02-01"}, sentBody(t, rec)["time_range"])
+	assert.Equal(t, map[string]any{"column": "ts", "since": "2026-01-01T12:00:00.123456789Z", "until": "2026-02-01T00:00:00Z"}, sentBody(t, rec)["time_range"])
+	_, err = rec.client(t).From("t").TimeRange("ts", from, time.Time{}).Fetch(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"column": "ts", "since": "2026-01-01T12:00:00.123456789Z"}, sentBody(t, rec)["time_range"])
+
+	// Last is the server's relative form, and the last window set wins.
+	_, err = rec.client(t).From("t").TimeRange("ts", from, from.Add(time.Hour)).Last("ts", 36*time.Hour).Fetch(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"column": "ts", "since": "36h0m0s"}, sentBody(t, rec)["time_range"])
 
 	// 0 sends no limit, leaving the cap to the server.
 	_, err = rec.client(t).From("t").Limit(0).Fetch(t.Context())
@@ -151,7 +187,21 @@ func TestQueryMisuse(t *testing.T) {
 		"empty where column":         {c.From("t").Where("", Eq, 1), "Where: empty column name"},
 		"empty order column":         {c.From("t").OrderBy("", Asc), "OrderBy: empty column name"},
 		"empty group column":         {c.From("t").GroupBy(""), "GroupBy: empty column name"},
-		"empty time column":          {c.From("t").TimeRange("", "1h", ""), "TimeRange: empty column name"},
+		"empty time column":          {c.From("t").TimeRange("", time.Now(), time.Time{}), "TimeRange: empty column name"},
+		"zero from":                  {c.From("t").TimeRange("ts", time.Time{}, time.Now()), "zero from time"},
+		"empty last column":          {c.From("t").Last("", time.Hour), "Last: empty column name"},
+		"zero last":                  {c.From("t").Last("ts", 0), "must be positive"},
+		"negative last":              {c.From("t").Last("ts", -time.Hour), "must be positive"},
+		"unknown op":                 {c.From("t").Where("a", Op("="), 1), "unknown operator"},
+		"empty op":                   {c.From("t").Where("a", "", 1), "unknown operator"},
+		"In with a scalar":           {c.From("t").Where("a", In, 1), "non-empty slice"},
+		"In with a string":           {c.From("t").Where("a", In, "ab"), "non-empty slice"},
+		"In with nil":                {c.From("t").Where("a", In, nil), "non-empty slice"},
+		"In with an empty slice":     {c.From("t").Where("a", In, []int{}), "non-empty slice"},
+		"unknown dir":                {c.From("t").OrderBy("a", "up"), "unknown direction"},
+		"star with columns":          {c.From("t").Select("*", "a"), `Select("*") can't be combined`},
+		"star after columns":         {c.From("t").Select("a").Select("*"), `Select("*") can't be combined`},
+		"star with aggregates":       {c.From("t").Select("*").Count("*", ""), "SelectAll can't be combined"},
 		"empty aggregate column":     {c.From("t").Sum("", ""), "Aggregate: empty column name"},
 		"empty aggregate fn":         {c.From("t").Aggregate("", "a", ""), "empty function name"},
 		"negative limit":             {c.From("t").Limit(-1), "negative limit"},
@@ -168,6 +218,14 @@ func TestQueryMisuse(t *testing.T) {
 	}
 	_, err := c.From("t").Select("").Limit(-1).Fetch(t.Context())
 	require.ErrorContains(t, err, "Select: empty column name")
+}
+
+func TestQueryInSliceKinds(t *testing.T) {
+	rec := newRecorder(t, reply(200, `[]`))
+	for name, v := range map[string]any{"ints": []int{1, 2}, "any": []any{"a", 1}, "named": []Op{Eq}} {
+		_, err := rec.client(t).From("t").Where("a", In, v).Fetch(t.Context())
+		require.NoError(t, err, name)
+	}
 }
 
 func TestScanDestination(t *testing.T) {
