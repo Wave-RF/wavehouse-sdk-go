@@ -196,9 +196,9 @@ func TestInsertAPIErrors(t *testing.T) {
 	require.ErrorContains(t, err, "decode response")
 }
 
-func TestInsertTenant(t *testing.T) {
+func TestInsertCustomHeader(t *testing.T) {
 	rec := newRecorder(t, reply(200, `{"total":1}`))
-	_, err := rec.client(t).WithTenant("acme").From("t").Insert(t.Context(), map[string]int{"a": 1})
+	_, err := rec.client(t, WithHeader("X-Tenant-ID", "acme")).From("t").Insert(t.Context(), map[string]int{"a": 1})
 	require.NoError(t, err)
 	assert.Equal(t, "acme", rec.last(t).header.Get("X-Tenant-ID"))
 	assert.Equal(t, "table=t", rec.last(t).rawQuery)

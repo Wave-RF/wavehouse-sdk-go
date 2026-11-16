@@ -193,7 +193,7 @@ func TestSubscribeCloseEndsNext(t *testing.T) {
 }
 
 func TestSubscribeUnknownTenant(t *testing.T) {
-	_, err := newClient(t).WithTenant("nope").Subscribe(t.Context(), "e2e_events", nil)
+	_, err := newClient(t, wavehouse.WithHeader("X-Tenant-ID", "nope")).Subscribe(t.Context(), "e2e_events", nil)
 	require.ErrorIs(t, err, wavehouse.ErrNotFound)
 }
 

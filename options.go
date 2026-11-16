@@ -24,7 +24,6 @@ type options struct {
 	httpClient  *http.Client
 	clientSet   bool
 	headers     http.Header
-	tenant      string
 	retry       RetryPolicy
 	userAgent   string
 	errs        []error
@@ -63,12 +62,16 @@ func WithHTTPClient(hc *http.Client) Option {
 	return func(o *options) { o.httpClient, o.clientSet = hc, true }
 }
 
-// WithHeader adds a header to every request. The headers the SDK sets itself
-// (Authorization, Content-Type, Accept, X-Tenant-ID and User-Agent) win: a
-// value given here for one of them is replaced, or dropped where the SDK sends
-// none. A later WithHeader for the same key replaces the earlier one. Any
+// WithHeader adds a header to every request, REST calls and the stream
+// connection alike. The headers the SDK sets itself (Authorization,
+// Content-Type, Accept and User-Agent) win: a value given here for one of them
+// is replaced, or dropped where the SDK sends none. Every other header is sent
+// unchanged. A later WithHeader for the same key replaces the earlier one. Any
 // custom header counts as a credential when deciding whether a redirect may be
 // followed.
+//
+// A client of a multi-tenant server selects its tenant with
+// WithHeader("X-Tenant-ID", id); the SDK has no tenant handling of its own.
 func WithHeader(key, value string) Option {
 	return func(o *options) {
 		if !validHeaderName(key) || strings.ContainsAny(value, "\r\n\x00") {
@@ -80,15 +83,6 @@ func WithHeader(key, value string) Option {
 		}
 		o.headers.Set(key, value)
 	}
-}
-
-// WithTenant scopes the client to one tenant of a multi-tenant server. Data
-// routes (/v1/ingest, /v1/query, /v1/pipes/*, /v1/stream, /v1/health) carry it
-// as the X-Tenant-ID header; admin routes (/v1/ops/*) as the ?tenant= query
-// parameter. An empty id sends neither, which the server reads as tenant 0.
-// [Client.WithTenant] derives a client for another tenant.
-func WithTenant(id string) Option {
-	return func(o *options) { o.tenant = id }
 }
 
 // WithRetry replaces the retry policy. Zero fields keep their defaults; a

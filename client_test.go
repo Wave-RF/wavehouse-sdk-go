@@ -106,19 +106,3 @@ func TestVersionOrDevel(t *testing.T) {
 		assert.Equal(t, want, versionOrDevel(in), in)
 	}
 }
-
-func TestWithTenantCopyIsolation(t *testing.T) {
-	rec := newRecorder(t, nil)
-	base := rec.client(t, WithTenant("acme"))
-	other := base.WithTenant("globex")
-	tenant0 := other.WithTenant("")
-
-	for _, tc := range []struct {
-		c    *Client
-		want string
-	}{{base, "acme"}, {other, "globex"}, {tenant0, ""}, {base, "acme"}} {
-		require.NoError(t, tc.c.Health(t.Context()))
-		assert.Equal(t, tc.want, rec.last(t).header.Get("X-Tenant-ID"))
-	}
-	assert.Same(t, base.hc, other.hc, "WithTenant copy does not share the http client")
-}

@@ -23,7 +23,7 @@ The Go client for [WaveHouse](https://github.com/Wave-RF/WaveHouse). Module `git
 ## Tests today
 
 - **Unit:** `*_test.go` against `httptest` servers, with testify; `testing/synctest` for anything timed (backoff, Retry-After), so no test sleeps.
-- **Request conformance:** `testdata/wire_cases.json` holds the cases; `conformance_test.go` replays them against every call that sends a request, tenant routing included (skipping cases whose `"sdks"` list leaves Go out); the JS SDK replays the same file.
+- **Request conformance:** `testdata/wire_cases.json` holds the cases; `conformance_test.go` replays them against every call that sends a request, including custom headers set through `WithHeader` (skipping cases whose `"sdks"` list leaves Go out); the JS SDK replays the same file.
 - **Live:** `e2e/`, against a real server started with testcontainers; run in CI by the `Live tests` job.
 - **Server end-to-end:** none yet.
 

@@ -550,7 +550,7 @@ func TestSubscribeHeaders(t *testing.T) {
 			}
 			return sseOpen(r), nil
 		},
-			WithTenant("acme"), WithHeader("Last-Event-ID", "custom-loses"),
+			WithHeader("X-Tenant-ID", "acme"), WithHeader("Last-Event-ID", "custom-loses"),
 			WithTokenSource(func(context.Context) (string, error) { return fmt.Sprintf("tok-%d", calls.Add(1)), nil }))
 		sub, err := c.Subscribe(t.Context(), "clicks", &SubscribeOptions{
 			ResumeID: "2026-11-16T00:00:00Z",

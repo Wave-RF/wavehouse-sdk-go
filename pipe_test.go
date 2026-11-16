@@ -11,7 +11,7 @@ import (
 
 func TestPipeRequest(t *testing.T) {
 	rec := newRecorder(t, reply(200, `[{"n":3}]`))
-	c := rec.client(t, WithToken("jwt")).WithTenant("acme")
+	c := rec.client(t, WithToken("jwt"), WithHeader("X-Tenant-ID", "acme"))
 	rows, err := c.Pipe("top pages").Param("limit", 10).Params(map[string]any{"tags": []string{"a", "b"}, "limit": 20}).Fetch(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, []Row{{"n": jsonNumber("3")}}, rows)

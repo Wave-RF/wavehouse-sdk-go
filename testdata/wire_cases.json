@@ -318,40 +318,48 @@
     "expected_path": "/v1/ops/pipes/my_pipe", "expected_method": "GET"
   },
   {
-    "name": "tenant on query is a header",
-    "endpoint": "query", "table": "clicks", "tenant": "acme", "operations": [],
+    "name": "custom X-Tenant-ID header on query arrives unchanged",
+    "endpoint": "query", "table": "clicks", "operations": [], "headers": {"X-Tenant-ID": "acme"},
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_headers": {"X-Tenant-ID": "acme"},
     "expected_body": {"select_all": true}
   },
   {
-    "name": "tenant on ingest is a header",
-    "endpoint": "ingest", "table": "clicks", "tenant": "acme", "operations": [{"method": "insert", "args": [{"page": "/a"}]}],
+    "name": "custom X-Tenant-ID header on ingest arrives unchanged",
+    "endpoint": "ingest", "table": "clicks", "operations": [{"method": "insert", "args": [{"page": "/a"}]}], "headers": {"X-Tenant-ID": "acme"},
     "expected_path": "/v1/ingest?table=clicks", "expected_method": "POST", "expected_headers": {"X-Tenant-ID": "acme"},
     "expected_ndjson": [{"page": "/a"}]
   },
   {
-    "name": "tenant on pipe is a header",
-    "endpoint": "pipe", "tenant": "acme", "pipe_name": "simple", "pipe_params": null,
+    "name": "custom X-Tenant-ID header on pipe arrives unchanged",
+    "endpoint": "pipe", "pipe_name": "simple", "pipe_params": null, "headers": {"X-Tenant-ID": "acme"},
     "expected_path": "/v1/pipes/simple", "expected_method": "POST", "expected_headers": {"X-Tenant-ID": "acme"},
     "expected_body": {}
   },
   {
-    "name": "tenant on health is a header",
-    "endpoint": "health", "tenant": "acme",
+    "name": "custom X-Tenant-ID header on health arrives unchanged",
+    "endpoint": "health", "headers": {"X-Tenant-ID": "acme"},
     "expected_path": "/v1/health", "expected_method": "GET", "expected_headers": {"X-Tenant-ID": "acme"}
   },
   {
-    "name": "tenant on schema list is a query parameter",
+    "name": "custom X-Tenant-ID header on an admin route arrives unchanged",
+    "endpoint": "schema_list", "headers": {"X-Tenant-ID": "acme"},
+    "expected_path": "/v1/ops/schema", "expected_method": "GET", "expected_headers": {"X-Tenant-ID": "acme"}
+  },
+  {
+    "name": "js: tenant on schema list is a query parameter",
+    "sdks": ["js"],
     "endpoint": "schema_list", "tenant": "acme",
     "expected_path": "/v1/ops/schema?tenant=acme", "expected_method": "GET", "expected_headers": {"X-Tenant-ID": ""}
   },
   {
-    "name": "tenant on schema table joins the table parameter",
+    "name": "js: tenant on schema table joins the table parameter",
+    "sdks": ["js"],
     "endpoint": "schema_table", "table": "events", "tenant": "acme",
     "expected_path": "/v1/ops/schema?table=events&tenant=acme", "expected_method": "GET", "expected_headers": {"X-Tenant-ID": ""}
   },
   {
-    "name": "tenant on raw SQL is a query parameter",
+    "name": "js: tenant on raw SQL is a query parameter",
+    "sdks": ["js"],
     "endpoint": "sql", "tenant": "acme", "sql": "SELECT 1",
     "expected_path": "/v1/ops/query?tenant=acme", "expected_method": "POST", "expected_headers": {"X-Tenant-ID": ""},
     "expected_body": {"sql": "SELECT 1"}
@@ -383,10 +391,5 @@
     "endpoint": "query", "table": "clicks", "operations": [{"method": "count", "args": ["*", ""]}, {"method": "groupBy", "args": ["page", "button"]}],
     "expected_path": "/v1/query?table=clicks", "expected_method": "POST", "expected_content_type": "application/json",
     "expected_body": {"group_by": ["page", "button"], "limit": 1000, "aggregations": [{"fn": "count", "column": "*", "alias": "count"}]}
-  },
-  {
-    "name": "health without a tenant sends none",
-    "endpoint": "health",
-    "expected_path": "/v1/health", "expected_method": "GET", "expected_headers": {"X-Tenant-ID": ""}
   }
 ]

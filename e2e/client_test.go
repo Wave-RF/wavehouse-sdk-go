@@ -154,16 +154,15 @@ func TestPipes(t *testing.T) {
 	require.ErrorIs(t, err, wavehouse.ErrNotFound)
 }
 
-func TestUnknownTenant(t *testing.T) {
-	c := newClient(t).WithTenant("nope")
-
-	t.Run("ops route", func(t *testing.T) {
-		_, err := c.Tables(t.Context())
-		require.ErrorIs(t, err, wavehouse.ErrNotFound)
-		assert.Contains(t, err.Error(), "unknown tenant: nope")
+// X-Tenant-ID is the caller's to send, through WithHeader. Admin routes ignore it.
+func TestTenantHeader(t *testing.T) {
+	t.Run("unknown tenant on a data route", func(t *testing.T) {
+		c := newClient(t, wavehouse.WithHeader("X-Tenant-ID", "nope"))
+		require.ErrorIs(t, c.Health(t.Context()), wavehouse.ErrNotFound)
 	})
 
-	t.Run("data route", func(t *testing.T) {
-		require.ErrorIs(t, c.Health(t.Context()), wavehouse.ErrNotFound)
+	t.Run("default tenant 0", func(t *testing.T) {
+		c := newClient(t, wavehouse.WithHeader("X-Tenant-ID", "0"))
+		require.NoError(t, c.Health(t.Context()))
 	})
 }

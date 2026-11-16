@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -158,10 +157,6 @@ func (c *Client) send(ctx context.Context, r *request) (*http.Response, error) {
 	} else {
 		req.Header.Del("Content-Type")
 	}
-	req.Header.Del("X-Tenant-ID")
-	if c.tenant != "" && isDataRoute(r.path) {
-		req.Header.Set("X-Tenant-ID", c.tenant)
-	}
 	auth, err := c.authorization(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("wavehouse: %s %s: %w: %w", r.method, r.path, errTokenSource, err)
@@ -193,25 +188,11 @@ func (c *Client) send(ctx context.Context, r *request) (*http.Response, error) {
 var errTokenSource = errors.New("token source")
 
 func (c *Client) url(r *request) string {
-	q := r.query
-	if c.tenant != "" && isOpsRoute(r.path) {
-		q = cloneValues(q)
-		q.Set("tenant", c.tenant)
-	}
 	u := c.baseURL + r.path
-	if len(q) > 0 {
-		u += "?" + q.Encode()
+	if len(r.query) > 0 {
+		u += "?" + r.query.Encode()
 	}
 	return u
-}
-
-// cloneValues copies q so adding the tenant never writes to a caller's values.
-func cloneValues(q url.Values) url.Values {
-	cp := make(url.Values, len(q)+1)
-	for k, v := range q {
-		cp[k] = slices.Clone(v)
-	}
-	return cp
 }
 
 func (c *Client) authorization(ctx context.Context) (string, error) {
@@ -261,15 +242,6 @@ func shouldRetry(kind callKind, err error) bool {
 		return re.retryable
 	}
 	return false
-}
-
-func isOpsRoute(path string) bool {
-	return path == "/v1/ops" || strings.HasPrefix(path, "/v1/ops/")
-}
-
-// isDataRoute is every /v1 route that resolves a tenant from X-Tenant-ID.
-func isDataRoute(path string) bool {
-	return strings.HasPrefix(path, "/v1/") && !isOpsRoute(path)
 }
 
 func newAPIError(r *request, res *http.Response, body []byte) *APIError {

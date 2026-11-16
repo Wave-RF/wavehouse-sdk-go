@@ -167,7 +167,7 @@ type Subscription struct {
 }
 
 // Subscribe streams the rows ingested into table, over GET /v1/stream
-// (server-sent events), with the client's tenant as X-Tenant-ID.
+// (server-sent events).
 //
 // An unknown or misspelled table is not an error: the server accepts the
 // stream and matches no events, so the subscription stays live and silent. To

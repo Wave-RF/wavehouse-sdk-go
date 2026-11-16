@@ -23,8 +23,7 @@ import (
 	"sync"
 )
 
-// Client talks to one WaveHouse server. It is safe for concurrent use, and a
-// copy from [Client.WithTenant] shares its connections.
+// Client talks to one WaveHouse server. It is safe for concurrent use.
 //
 // Failed calls are retried per the [RetryPolicy], but only where resending is
 // safe: a read is retried after a transport error or a retryable [*APIError];
@@ -41,7 +40,6 @@ type Client struct {
 	tokenSource func(context.Context) (string, error)
 	operatorKey string
 	headers     http.Header
-	tenant      string
 	retry       RetryPolicy
 	userAgent   string
 }
@@ -93,7 +91,6 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 		noRedirect:  &noRedirect,
 		tokenSource: o.tokenSource,
 		headers:     o.headers,
-		tenant:      o.tenant,
 		retry:       o.retry,
 		userAgent:   ua,
 	}
@@ -144,16 +141,6 @@ func withScheme(in string) string {
 		return "http://" + rest
 	}
 	return "https://" + rest
-}
-
-// WithTenant returns a copy of c scoped to tenant id, sharing c's connections
-// and configuration, like [log/slog.Logger.With]. c itself is unchanged. An
-// empty id addresses the default tenant 0. See [WithTenant] for how the
-// tenant is sent.
-func (c *Client) WithTenant(id string) *Client {
-	cp := *c
-	cp.tenant = id
-	return &cp
 }
 
 const modulePath = "github.com/Wave-RF/wavehouse-sdk-go"

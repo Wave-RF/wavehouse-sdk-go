@@ -307,9 +307,9 @@ func TestQueryAPIError(t *testing.T) {
 	assert.Len(t, rec.requests(), 1)
 }
 
-func TestQueryTenantAndAuth(t *testing.T) {
+func TestQueryHeadersAndAuth(t *testing.T) {
 	rec := newRecorder(t, reply(200, `[]`))
-	_, err := rec.client(t, WithToken("jwt")).WithTenant("acme").From("t").Fetch(t.Context())
+	_, err := rec.client(t, WithToken("jwt"), WithHeader("X-Tenant-ID", "acme")).From("t").Fetch(t.Context())
 	require.NoError(t, err)
 	got := rec.last(t)
 	assert.Equal(t, "acme", got.header.Get("X-Tenant-ID"))

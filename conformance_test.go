@@ -23,15 +23,15 @@ var wireCasesJSON []byte
 
 // wireCase is one SDK call and the exact request it must send.
 type wireCase struct {
-	Name       string         `json:"name"`
-	SDKs       []string       `json:"sdks"` // which SDKs replay the case; empty means all
-	Endpoint   string         `json:"endpoint"`
-	Table      string         `json:"table"`
-	Tenant     string         `json:"tenant"`
-	Operations []wireOp       `json:"operations"`
-	PipeName   string         `json:"pipe_name"`
-	PipeParams map[string]any `json:"pipe_params"`
-	SQL        string         `json:"sql"`
+	Name       string            `json:"name"`
+	SDKs       []string          `json:"sdks"` // which SDKs replay the case; empty means all
+	Endpoint   string            `json:"endpoint"`
+	Table      string            `json:"table"`
+	Headers    map[string]string `json:"headers"` // request headers set through WithHeader
+	Operations []wireOp          `json:"operations"`
+	PipeName   string            `json:"pipe_name"`
+	PipeParams map[string]any    `json:"pipe_params"`
+	SQL        string            `json:"sql"`
 
 	ExpectedPath        string            `json:"expected_path"`
 	ExpectedMethod      string            `json:"expected_method"`
@@ -82,10 +82,11 @@ func TestConformanceWireFormat(t *testing.T) {
 		}
 		t.Run(tc.Name, func(t *testing.T) {
 			rec := newRecorder(t, wireAnswer)
-			c := rec.client(t)
-			if tc.Tenant != "" {
-				c = c.WithTenant(tc.Tenant)
+			var opts []Option
+			for k, v := range tc.Headers {
+				opts = append(opts, WithHeader(k, v))
 			}
+			c := rec.client(t, opts...)
 			require.NoError(t, runWireCase(t, c, tc))
 
 			if tc.ExpectedNoRequest {

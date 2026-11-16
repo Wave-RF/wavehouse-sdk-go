@@ -79,22 +79,6 @@ func ExampleWithOperatorKey() {
 	_ = wh
 }
 
-func ExampleClient_WithTenant() {
-	wh, err := wavehouse.New("http://localhost:8080", wavehouse.WithOperatorKey(os.Getenv("WAVEHOUSE_OPERATOR_KEY")))
-	if err != nil {
-		log.Fatal(err)
-	}
-	// acme shares wh's connections; wh still addresses the default tenant.
-	acme := wh.WithTenant("acme")
-	tables, err := acme.Tables(context.Background())
-	if err != nil {
-		log.Fatal(err)
-	}
-	for _, t := range tables {
-		fmt.Println(t.Name)
-	}
-}
-
 // ExampleClient_Health builds a datasource health check. Health alone is not
 // one: the endpoint is public and checks neither the credential nor ClickHouse.
 func ExampleClient_Health() {
@@ -106,7 +90,7 @@ func ExampleClient_Health() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		if err := wh.Health(ctx); err != nil { // the server is up and serves this tenant
+		if err := wh.Health(ctx); err != nil { // the server is up
 			return fmt.Errorf("server: %w", err)
 		}
 		// An authenticated read proves the credential and the path to ClickHouse.
@@ -204,12 +188,15 @@ func ExampleAPIError() {
 	}
 }
 
-func ExampleWithTenant() {
-	wh, err := wavehouse.New("http://localhost:8080", wavehouse.WithTenant("acme"))
+// ExampleWithHeader selects a tenant of a multi-tenant server. The SDK has no
+// tenant option: X-Tenant-ID is an ordinary header, sent unchanged on every
+// call and on the stream.
+func ExampleWithHeader() {
+	wh, err := wavehouse.New("http://localhost:8080", wavehouse.WithHeader("X-Tenant-ID", "acme"))
 	if err != nil {
 		log.Fatal(err)
 	}
-	// Sent as X-Tenant-ID: an unknown tenant is a 404.
+	// An unknown tenant is a 404.
 	if err := wh.Health(context.Background()); errors.Is(err, wavehouse.ErrNotFound) {
 		fmt.Println("tenant not served")
 	}

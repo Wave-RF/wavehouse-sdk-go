@@ -67,7 +67,7 @@ func TestSDKHeadersWin(t *testing.T) {
 	c := rec.client(t, WithToken("jwt"), WithUserAgent("grafana-plugin/1.0"),
 		WithHeader("X-Custom", "a"), WithHeader("x-custom", "b"),
 		WithHeader("Authorization", "Basic nope"), WithHeader("User-Agent", "nope"),
-		WithHeader("X-Tenant-ID", "nope"), WithHeader("Content-Type", "text/nope"), WithHeader("Accept", "nope"))
+		WithHeader("Content-Type", "text/nope"), WithHeader("Accept", "nope"))
 	_, err := c.DLQStats(t.Context())
 	require.NoError(t, err)
 	h := rec.last(t).header
@@ -75,64 +75,26 @@ func TestSDKHeadersWin(t *testing.T) {
 	assert.Equal(t, "Bearer jwt", h.Get("Authorization"))
 	assert.Equal(t, "grafana-plugin/1.0 wavehouse-sdk-go/devel", h.Get("User-Agent"))
 	assert.Equal(t, "application/json", h.Get("Accept"))
-	assert.Empty(t, h.Values("X-Tenant-ID"))
 	assert.Empty(t, h.Values("Content-Type"))
 }
 
-func TestTenantPlacement(t *testing.T) {
-	rec := newRecorder(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/health" {
-			_, _ = io.WriteString(w, "{}")
-		}
-	})
-	c := rec.client(t, WithTenant("acme"))
+// A header set with WithHeader that the SDK does not own, X-Tenant-ID
+// included, is sent unchanged on every kind of call.
+func TestCustomHeaderPassesThrough(t *testing.T) {
+	rec := newRecorder(t, wireAnswer)
+	c := rec.client(t, WithHeader("X-Tenant-ID", "acme"))
 
-	cases := []struct {
-		name               string
-		call               func(*Client) error
-		wantHeader, wantQS string
-	}{
-		{"data route", func(c *Client) error { return c.Health(t.Context()) }, "acme", ""},
-		{"ops route", func(c *Client) error { _, err := c.DLQStats(t.Context()); return err }, "", "tenant=acme"},
-		{"ops route with query", func(c *Client) error { _, err := c.TableSchema(t.Context(), "clicks"); return err }, "", "table=clicks&tenant=acme"},
-		{"tenant-exempt", func(c *Client) error { _, err := c.Version(t.Context()); return err }, "", ""},
-	}
-	for _, tc := range cases {
-		require.NoError(t, tc.call(c), tc.name)
-		got := rec.last(t)
-		assert.Equal(t, tc.wantHeader, got.header.Get("X-Tenant-ID"), tc.name)
-		assert.Equal(t, tc.wantQS, got.rawQuery, tc.name)
-	}
-
-	// Tenant 0 sends neither form.
-	_, err := rec.client(t).DLQStats(t.Context())
-	require.NoError(t, err)
-	assert.Empty(t, rec.last(t).rawQuery)
-	assert.Empty(t, rec.last(t).header.Values("X-Tenant-ID"))
-}
-
-func TestTenantDoesNotMutateQuery(t *testing.T) {
-	c, err := New("http://h", WithTenant("acme"))
-	require.NoError(t, err)
-	q := url.Values{"table": {"t"}}
-	assert.Equal(t, "http://h/v1/ops/schema?table=t&tenant=acme", c.url(&request{path: "/v1/ops/schema", query: q}))
-	assert.False(t, q.Has("tenant"), "tenant written into the caller's query")
-}
-
-func TestRouteClassification(t *testing.T) {
-	for path, want := range map[string][2]bool{
-		"/v1/ops":          {true, false},
-		"/v1/ops/schema":   {true, false},
-		"/v1/ops/pipes/xy": {true, false},
-		"/v1/opsx":         {false, true},
-		"/v1/query":        {false, true},
-		"/v1/stream":       {false, true},
-		"/v1/pipes/a":      {false, true},
-		"/v1/ingest":       {false, true},
-		"/version":         {false, false},
-		"/v1":              {false, false},
+	for name, call := range map[string]func() error{
+		"query":  func() error { _, err := c.From("t").Fetch(t.Context()); return err },
+		"insert": func() error { _, err := c.From("t").Insert(t.Context(), map[string]int{"a": 1}); return err },
+		"pipe":   func() error { _, err := c.Pipe("p").Fetch(t.Context()); return err },
+		"admin":  func() error { _, err := c.DLQStats(t.Context()); return err },
+		"health": func() error { return c.Health(t.Context()) },
 	} {
-		assert.Equal(t, want, [2]bool{isOpsRoute(path), isDataRoute(path)}, path)
+		require.NoError(t, call(), name)
+		got := rec.last(t)
+		assert.Equal(t, []string{"acme"}, got.header.Values("X-Tenant-ID"), name)
+		assert.NotContains(t, got.rawQuery, "tenant", name)
 	}
 }
 

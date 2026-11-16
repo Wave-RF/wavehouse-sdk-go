@@ -15,7 +15,7 @@ func jsonNumber(s string) json.Number { return json.Number(s) }
 
 func TestSQLRequest(t *testing.T) {
 	rec := newRecorder(t, reply(200, `[{"n":1}]`))
-	c := rec.client(t, WithOperatorKey("k")).WithTenant("acme")
+	c := rec.client(t, WithOperatorKey("k"))
 	rows, err := c.SQL("SELECT 1 AS n").Fetch(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, []Row{{"n": jsonNumber("1")}}, rows)
@@ -23,8 +23,7 @@ func TestSQLRequest(t *testing.T) {
 	got := rec.last(t)
 	assert.Equal(t, "POST", got.method)
 	assert.Equal(t, "/v1/ops/query", got.path)
-	assert.Equal(t, "tenant=acme", got.rawQuery)
-	assert.Empty(t, got.header.Get("X-Tenant-ID"), "ops routes carry the tenant in the query")
+	assert.Empty(t, got.rawQuery)
 	assert.Equal(t, "Operator k", got.header.Get("Authorization"))
 	assert.Equal(t, "application/json", got.header.Get("Content-Type"))
 	assert.JSONEq(t, `{"sql":"SELECT 1 AS n"}`, got.body)
