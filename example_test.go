@@ -202,6 +202,22 @@ func ExampleWithHeader() {
 	}
 }
 
+// ExampleRetryPolicy bounds each attempt, so a stalled one is retried instead
+// of holding the call: the first attempt gets 5s, and the call's ctx still caps
+// the whole of it.
+func ExampleRetryPolicy() {
+	wh, err := wavehouse.New("http://localhost:8080",
+		wavehouse.WithRetry(wavehouse.RetryPolicy{MaxAttempts: 3, AttemptTimeout: 5 * time.Second}))
+	if err != nil {
+		log.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if _, err := wh.From("clicks").Limit(10).Fetch(ctx); errors.Is(err, wavehouse.ErrAttemptTimeout) {
+		fmt.Println("every attempt stalled:", err)
+	}
+}
+
 func ExampleWithHTTPClient() {
 	// The default client has no overall timeout; bound each call with its ctx instead.
 	hc := &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 32}}

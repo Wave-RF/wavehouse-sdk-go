@@ -95,6 +95,7 @@ func (c *Client) do(ctx context.Context, r *request) (*response, error) {
 	for attempt := 1; ; attempt++ {
 		res, err := c.attempt(ctx, r)
 		if err == nil || attempt >= c.retry.MaxAttempts || ctx.Err() != nil || !shouldRetry(r.kind, err) {
+			noteAttempts(err, attempt)
 			return res, err
 		}
 		wait := c.retry.backoff(attempt)
@@ -108,9 +109,16 @@ func (c *Client) do(ctx context.Context, r *request) (*response, error) {
 	}
 }
 
-// attempt sends r once and buffers the answer.
+// attempt sends r once and buffers the answer. With an AttemptTimeout, the
+// whole exchange, body included, has that long.
 func (c *Client) attempt(ctx context.Context, r *request) (*response, error) {
-	res, err := c.send(ctx, r)
+	actx := ctx
+	if d := c.retry.AttemptTimeout; d > 0 {
+		var cancel context.CancelFunc
+		actx, cancel = context.WithTimeoutCause(ctx, d, ErrAttemptTimeout)
+		defer cancel()
+	}
+	res, err := c.send(ctx, actx, r)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +126,7 @@ func (c *Client) attempt(ctx context.Context, r *request) (*response, error) {
 	if res.StatusCode/100 == 2 {
 		body, err := io.ReadAll(res.Body)
 		if err != nil {
-			return nil, c.transportError(ctx, r, err)
+			return nil, c.transportError(ctx, actx, r, err)
 		}
 		return &response{status: res.StatusCode, header: res.Header, body: body}, nil
 	}
@@ -129,12 +137,16 @@ func (c *Client) attempt(ctx context.Context, r *request) (*response, error) {
 // send makes one HTTP request and returns any HTTP answer with its body
 // unread, except a redirect while credentialed, which is an error. The
 // caller closes the body.
-func (c *Client) send(ctx context.Context, r *request) (*http.Response, error) {
+//
+// The request itself runs under actx, a child of the caller's ctx that may
+// carry the attempt's deadline. The token source runs under ctx: it is meant
+// to be cheap, and the deadline bounds the HTTP exchange.
+func (c *Client) send(ctx, actx context.Context, r *request) (*http.Response, error) {
 	var body io.Reader
 	if r.body != nil {
 		body = bytes.NewReader(r.body)
 	}
-	req, err := http.NewRequestWithContext(ctx, r.method, c.url(r), body)
+	req, err := http.NewRequestWithContext(actx, r.method, c.url(r), body)
 	if err != nil {
 		return nil, fmt.Errorf("wavehouse: %s %s: %w", r.method, r.path, err)
 	}
@@ -173,7 +185,7 @@ func (c *Client) send(ctx context.Context, r *request) (*http.Response, error) {
 	}
 	res, err := hc.Do(req)
 	if err != nil {
-		return nil, c.transportError(ctx, r, err)
+		return nil, c.transportError(ctx, actx, r, err)
 	}
 	if credentialed && res.StatusCode/100 == 3 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, maxErrorBody))
@@ -211,12 +223,32 @@ func (c *Client) authorization(ctx context.Context) (string, error) {
 	return "", nil
 }
 
-func (c *Client) transportError(ctx context.Context, r *request, err error) error {
+// transportError classifies a failed exchange. ctx is the caller's, actx the
+// attempt's. An attempt that hit its own deadline while the caller's ctx is
+// live is retryable like any transport error, with the same rule for calls
+// that may write: only a dial that never connected is safe to resend. Its
+// cause is flattened to text, so it doesn't match context.DeadlineExceeded,
+// which is the caller's own deadline.
+func (c *Client) transportError(ctx, actx context.Context, r *request, err error) error {
 	retryable := ctx.Err() == nil
 	if r.kind == callPipe || r.kind == callSQL {
 		retryable = retryable && isDialError(err)
 	}
-	return &requestError{method: r.method, path: r.path, err: err, retryable: retryable}
+	re := &requestError{method: r.method, path: r.path, err: err, retryable: retryable}
+	if ctx.Err() == nil && errors.Is(context.Cause(actx), ErrAttemptTimeout) {
+		re.timedOut = true
+		re.timeout = c.retry.AttemptTimeout
+		re.err = errors.New(err.Error())
+	}
+	return re
+}
+
+// noteAttempts records how many attempts a failed call made, for the message
+// of an attempt timeout.
+func noteAttempts(err error, n int) {
+	if re, ok := errors.AsType[*requestError](err); ok && re.timedOut {
+		re.attempts = n
+	}
 }
 
 // isDialError reports a failure to connect, after which the request

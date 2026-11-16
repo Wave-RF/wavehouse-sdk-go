@@ -110,6 +110,20 @@ type RetryPolicy struct {
 	// MaxBackoff caps every wait, a server's Retry-After included.
 	// Default 30s.
 	MaxBackoff time.Duration
+	// AttemptTimeout bounds each attempt on its own, so one that stalls is
+	// retried instead of holding the whole call. 0, the default, sets none.
+	// It covers a REST call from sending to the end of the body, and each
+	// stream (re)connect up to the server's response headers; an established
+	// stream is not cut off. The caller's ctx is separate: cancelling it or
+	// reaching its deadline ends the call at once and is never retried.
+	//
+	// An attempt that hits the limit is retried after a backoff, within
+	// MaxAttempts, under the same rules as any transport error: a raw SQL
+	// call or a pipe call is not resent once the request may have reached the
+	// server, which is any timeout except one while connecting. The final
+	// error says "attempt timeout" with the attempt count and matches
+	// [ErrAttemptTimeout]; it does not match [context.DeadlineExceeded].
+	AttemptTimeout time.Duration
 }
 
 const (
@@ -119,7 +133,7 @@ const (
 )
 
 func (p RetryPolicy) withDefaults() (RetryPolicy, error) {
-	if p.MaxAttempts < 0 || p.MinBackoff < 0 || p.MaxBackoff < 0 {
+	if p.MaxAttempts < 0 || p.MinBackoff < 0 || p.MaxBackoff < 0 || p.AttemptTimeout < 0 {
 		return p, fmt.Errorf("WithRetry: negative field in %+v", p)
 	}
 	if p.MaxAttempts == 0 {

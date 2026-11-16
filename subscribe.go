@@ -187,8 +187,10 @@ type Subscription struct {
 // count starts over after a connection that delivered an event or stayed up
 // 30s), and resumes with Last-Event-ID set to the last event delivered. The
 // token source is called on every connect, and once a connection has been
-// live, its errors are retried like a transport error. A refusal for good,
-// as above, ends the subscription with that error in Err.
+// live, its errors are retried like a transport error. RetryPolicy.AttemptTimeout
+// bounds each connect up to the server's response headers, and never an
+// established connection. A refusal for good, as above, ends the subscription
+// with that error in Err.
 //
 // The server announces the column names in an "event: schema" frame and then
 // sends each row as a positional array; Subscribe zips them into an [Event].
@@ -404,6 +406,7 @@ func (s *Subscription) loop(ready chan<- error) (end error) {
 			// A token source that fails after the stream was live is a blip to ride out, not a refusal.
 			retryable := IsRetryable(err) || (live && errors.Is(err, errTokenSource))
 			if !retryable || (ready != nil && failures+1 >= s.c.retry.MaxAttempts) {
+				noteAttempts(err, failures+1)
 				return err
 			}
 		}
@@ -443,21 +446,55 @@ func (s *Subscription) connect() (*http.Response, error) {
 	case !s.since.IsZero():
 		r.query.Set("since", s.since.UTC().Format(time.RFC3339Nano))
 	}
-	res, err := s.c.send(s.ctx, r)
+	// The attempt timeout runs until the response headers are in: the body of
+	// an established stream is long-lived and has no deadline.
+	actx, cancel := context.WithCancelCause(s.ctx)
+	var timer *time.Timer
+	if d := s.c.retry.AttemptTimeout; d > 0 {
+		timer = time.AfterFunc(d, func() { cancel(ErrAttemptTimeout) })
+	}
+	fail := func() {
+		if timer != nil {
+			timer.Stop()
+		}
+		cancel(nil)
+	}
+	res, err := s.c.send(s.ctx, actx, r)
 	if err != nil {
+		fail()
 		return nil, err
 	}
 	if res.StatusCode/100 != 2 {
 		body, _ := io.ReadAll(io.LimitReader(res.Body, maxErrorBody))
 		_ = res.Body.Close()
+		fail()
 		return nil, newAPIError(r, res, body)
 	}
 	if ct := res.Header.Get("Content-Type"); res.StatusCode != http.StatusOK || !isEventStream(ct) {
 		_ = res.Body.Close()
+		fail()
 		return nil, fmt.Errorf("wavehouse: GET %s: the server answered %d with Content-Type %q, not an event stream",
 			streamPath, res.StatusCode, ct)
 	}
+	if timer != nil && !timer.Stop() {
+		// The deadline fired as the headers arrived, so the body is cancelled too.
+		_ = res.Body.Close()
+		return nil, s.c.transportError(s.ctx, actx, r, context.Cause(actx))
+	}
+	// The body lives under actx; releasing it with the body frees the context.
+	res.Body = &releaseBody{ReadCloser: res.Body, release: func() { cancel(nil) }}
 	return res, nil
+}
+
+// releaseBody runs release when the body is closed.
+type releaseBody struct {
+	io.ReadCloser
+	release func()
+}
+
+func (b *releaseBody) Close() error {
+	defer b.release()
+	return b.ReadCloser.Close()
 }
 
 // connectionStart is when res's connection began by the server's clock,

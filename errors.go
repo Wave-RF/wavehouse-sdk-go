@@ -75,6 +75,11 @@ var (
 // next hop would receive the credential. The error names the Location.
 var ErrRedirect = errors.New("wavehouse: redirect refused")
 
+// ErrAttemptTimeout is matched by the error of a call whose last attempt hit
+// [RetryPolicy].AttemptTimeout. It is not the caller's own deadline: such an
+// error doesn't match [context.DeadlineExceeded].
+var ErrAttemptTimeout = errors.New("wavehouse: attempt timeout")
+
 var sentinelStatus = map[error]int{
 	ErrBadRequest:   http.StatusBadRequest,
 	ErrUnauthorized: http.StatusUnauthorized,
@@ -108,13 +113,24 @@ type requestError struct {
 	err          error
 	// retryable is whether resending was safe for this call, for IsRetryable.
 	retryable bool
+	// timedOut is an attempt that hit RetryPolicy.AttemptTimeout, timeout
+	// long, after attempts attempts.
+	timedOut bool
+	timeout  time.Duration
+	attempts int
 }
 
 func (e *requestError) Error() string {
+	if e.timedOut {
+		return fmt.Sprintf("wavehouse: %s %s: attempt timeout (%v each) after %d attempt(s): %s",
+			e.method, e.path, e.timeout, max(e.attempts, 1), e.err)
+	}
 	return "wavehouse: " + e.method + " " + e.path + ": " + e.err.Error()
 }
 
 func (e *requestError) Unwrap() error { return e.err }
+
+func (e *requestError) Is(target error) bool { return e.timedOut && target == ErrAttemptTimeout }
 
 // redirectError is a refused redirect; it matches ErrRedirect.
 type redirectError struct {

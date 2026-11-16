@@ -63,6 +63,10 @@ func main() {
 
 The same client runs pipes (`wh.Pipe("top_pages").Param("limit", 10).Scan(ctx, &rows)`), raw SQL as an admin (`wh.SQL("SELECT ...").Scan(ctx, &rows)`, or `.Exec(ctx)` for DDL) and the admin reads (`wh.Tables`, `wh.TableSchema`, `wh.Pipes`, `wh.DLQStats`). An admin call takes `wavehouse.ForTenant("acme")` to address another tenant (`wh.SQL(...).ForTenant("acme")` for SQL); it sends `?tenant=`, which the admin routes read in place of the `X-Tenant-ID` header.
 
+## Authentication, headers and timeouts
+
+`RetryPolicy.AttemptTimeout` (off by default) gives each attempt its own deadline, so a stalled one is retried instead of holding the whole call. It covers a REST call, and each stream connect up to the response headers, but not an established stream. Your ctx still ends the call at once. A raw SQL or pipe call is not resent once the request may have reached the server.
+
 ## Streaming
 
 `Subscribe` streams the rows ingested into a table, reconnecting and resuming on its own until you close it. A table the server doesn't know is not an error, only a stream that never delivers, so check the name first (`wh.TableSchema`, or a `Limit(1)` query):

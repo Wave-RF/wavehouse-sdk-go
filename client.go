@@ -30,7 +30,8 @@ import (
 // a call that may write retries a transport error only when the request never
 // left (a dial failure). Each call's doc says which kind it is. A server's
 // Retry-After is honoured, capped at RetryPolicy.MaxBackoff, and cancelling
-// the ctx ends a wait at once.
+// the ctx ends a wait at once. RetryPolicy.AttemptTimeout, off by default,
+// gives each attempt its own deadline.
 type Client struct {
 	baseURL string
 	hc      *http.Client
