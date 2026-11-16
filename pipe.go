@@ -85,3 +85,14 @@ func (p *PipeCall) Fetch(ctx context.Context) ([]Row, error) {
 	}
 	return rows, nil
 }
+
+// Exec runs the pipe and discards its rows, for a pipe that writes; like
+// [SQLCall.Exec]. The retry rules are those of [PipeCall.Scan].
+func (p *PipeCall) Exec(ctx context.Context) error {
+	r, err := p.request()
+	if err != nil {
+		return err
+	}
+	_, err = p.c.do(ctx, r)
+	return err
+}

@@ -88,8 +88,8 @@ func TestAdminCalls(t *testing.T) {
 			want: []TableSchema{clicks},
 		},
 		{
-			name: "Table", body: tableBody, method: "GET", path: "/v1/ops/schema", query: "table=clicks",
-			call: func(c *Client) (any, error) { return c.Table(t.Context(), "clicks") },
+			name: "TableSchema", body: tableBody, method: "GET", path: "/v1/ops/schema", query: "table=clicks",
+			call: func(c *Client) (any, error) { return c.TableSchema(t.Context(), "clicks") },
 			want: &TableSchema{Name: "clicks", Columns: clicks.Columns[:2]},
 		},
 		{
@@ -152,7 +152,7 @@ func TestAdminCallErrors(t *testing.T) {
 	for name, call := range map[string]func() error{
 		"Version":        func() error { _, err := c.Version(t.Context()); return err },
 		"Tables":         func() error { _, err := c.Tables(t.Context()); return err },
-		"Table":          func() error { _, err := c.Table(t.Context(), "nope"); return err },
+		"TableSchema":    func() error { _, err := c.TableSchema(t.Context(), "nope"); return err },
 		"RefreshSchema":  func() error { _, err := c.RefreshSchema(t.Context()); return err },
 		"DLQStats":       func() error { _, err := c.DLQStats(t.Context()); return err },
 		"ReloadSettings": func() error { _, err := c.ReloadSettings(t.Context()); return err },
@@ -164,7 +164,7 @@ func TestAdminCallErrors(t *testing.T) {
 	}
 
 	sent := len(rec.requests())
-	_, err := c.Table(t.Context(), "")
+	_, err := c.TableSchema(t.Context(), "")
 	assert.Error(t, err)
 	_, err = c.PipeDefinition(t.Context(), "")
 	assert.Error(t, err)

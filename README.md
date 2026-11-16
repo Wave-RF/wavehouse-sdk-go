@@ -59,7 +59,9 @@ func main() {
 }
 ```
 
-The same client runs pipes (`wh.Pipe("top_pages").Param("limit", 10).Scan(ctx, &rows)`), raw SQL as an admin (`wh.SQL("SELECT ...").Scan(ctx, &rows)`, or `.Exec(ctx)` for DDL) and the admin reads (`wh.Tables`, `wh.Pipes`, `wh.DLQStats`). Streaming is being rewritten onto this client and returns before the first release.
+`Fetch` returns `[]wavehouse.Row`, a map with typed accessors (`row.Uint64("score")`, `row.Time("ts")`, ...) that keep 64-bit integers exact and report a null or missing column by name. A window is `Last("ts", time.Hour)` (the server's clock) or `TimeRange("ts", from, to)`; `GroupBy` columns are selected for you; an aggregate with no alias is named `<fn>_<column>`, so `Count("*", "")` is `count`. A bad operator or direction, an empty `In` list, or a `Where` on a query used for `Insert` is an error from the call, before anything is sent. `wh.Health` is a public liveness probe; the package examples show a real datasource health check, and a per-request token for a plugin that forwards its user's credential.
+
+The same client runs pipes (`wh.Pipe("top_pages").Param("limit", 10).Scan(ctx, &rows)`), raw SQL as an admin (`wh.SQL("SELECT ...").Scan(ctx, &rows)`, or `.Exec(ctx)` for DDL) and the admin reads (`wh.Tables`, `wh.TableSchema`, `wh.Pipes`, `wh.DLQStats`). Streaming is being rewritten onto this client and returns before the first release.
 
 ## Documentation
 

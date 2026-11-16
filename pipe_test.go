@@ -102,3 +102,15 @@ func TestPipeRetryClasses(t *testing.T) {
 		})
 	}
 }
+
+func TestPipeExec(t *testing.T) {
+	rec := newRecorder(t, reply(200, `[]`))
+	require.NoError(t, rec.client(t).Pipe("purge").Param("older_than", 7).Exec(t.Context()))
+	got := rec.last(t)
+	assert.Equal(t, "/v1/pipes/purge", got.path)
+	assert.JSONEq(t, `{"older_than":7}`, got.body)
+
+	require.ErrorContains(t, rec.client(t).Pipe("").Exec(t.Context()), "empty pipe name")
+	bad := newRecorder(t, reply(404, `{"error":"pipe not found"}`))
+	require.ErrorIs(t, bad.client(t).Pipe("nope").Exec(t.Context()), ErrNotFound)
+}
