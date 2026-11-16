@@ -1026,3 +1026,144 @@ func TestSubscriptionEventsNoLeak(t *testing.T) {
 		_, open = <-sub.Events()
 	}
 }
+
+// drops records OnDrop calls.
+type drops struct {
+	mu  sync.Mutex
+	got []error
+}
+
+func (d *drops) on(err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.got = append(d.got, err)
+}
+
+func (d *drops) list() []error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]error(nil), d.got...)
+}
+
+// badFrame is a data frame that is not JSON, with the id ts(n).
+func badFrame(n int) string {
+	return fmt.Sprintf("id: %s\ndata: {SECRET-PAYLOAD\n\n", ts(n))
+}
+
+// A bad frame that is fine after a reconnect was a corrupted connection: the
+// event arrives once and nothing is reported.
+func TestSubscribeTransientBadFrameIsRetriedNotDropped(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var d drops
+		c, f := newFakeStream(t, func(n int, r *http.Request) (*http.Response, error) {
+			if n == 1 {
+				return sseOpen(r, schemaFrame("a"), rowFrame(1, "one"), badFrame(2)), nil
+			}
+			return sseOpen(r, schemaFrame("a"), rowFrame(2, "two"), rowFrame(3, "three")), nil
+		})
+		sub, err := c.Subscribe(t.Context(), "t", &SubscribeOptions{OnDrop: d.on})
+		require.NoError(t, err)
+		defer func() { _ = sub.Close() }()
+		for _, want := range []string{"one", "two", "three"} {
+			assert.Equal(t, []any{want}, next(t, sub).Values)
+		}
+		synctest.Wait()
+		assert.Empty(t, d.list())
+		require.Len(t, f.requests(), 2)
+		assert.Equal(t, ts(1), f.requests()[1].Header.Get("Last-Event-ID"))
+	})
+}
+
+// A frame that fails again at the same place after a reconnect is skipped on
+// the same connection, once, and the next event is delivered.
+func TestSubscribePersistentBadFrameIsSkippedAfterOneReconnect(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var d drops
+		c, f := newFakeStream(t, func(n int, r *http.Request) (*http.Response, error) {
+			if n == 1 {
+				return sseOpen(r, schemaFrame("a"), rowFrame(1, "one"), badFrame(2), rowFrame(3, "three")), nil
+			}
+			return sseOpen(r, schemaFrame("a"), badFrame(2), rowFrame(3, "three"), rowFrame(4, "four")), nil
+		})
+		sub, err := c.Subscribe(t.Context(), "t", &SubscribeOptions{OnDrop: d.on})
+		require.NoError(t, err)
+		defer func() { _ = sub.Close() }()
+		assert.Equal(t, []any{"one"}, next(t, sub).Values)
+		assert.Equal(t, []any{"three"}, next(t, sub).Values)
+		assert.Equal(t, []any{"four"}, next(t, sub).Values)
+		synctest.Wait()
+		require.Len(t, d.list(), 1)
+		assert.ErrorIs(t, d.list()[0], errFrameMalformed)
+		assert.Contains(t, d.list()[0].Error(), ts(2))
+		assert.NotContains(t, d.list()[0].Error(), "SECRET")
+		assert.Len(t, f.requests(), 2, "reconnected once, not again")
+	})
+}
+
+func TestSubscribePersistentOversizeFrameIsSkipped(t *testing.T) {
+	old := maxSSELine
+	maxSSELine = 256
+	t.Cleanup(func() { maxSSELine = old })
+	synctest.Test(t, func(t *testing.T) {
+		var d drops
+		big := fmt.Sprintf("id: %s\ndata: %s\n\n", ts(2), strings.Repeat("SECRET", 100))
+		c, f := newFakeStream(t, func(n int, r *http.Request) (*http.Response, error) {
+			if n == 1 {
+				return sseOpen(r, schemaFrame("a"), rowFrame(1, "one"), big, rowFrame(3, "three")), nil
+			}
+			return sseOpen(r, schemaFrame("a"), big, rowFrame(3, "three")), nil
+		})
+		sub, err := c.Subscribe(t.Context(), "t", &SubscribeOptions{OnDrop: d.on})
+		require.NoError(t, err)
+		defer func() { _ = sub.Close() }()
+		assert.Equal(t, []any{"one"}, next(t, sub).Values)
+		assert.Equal(t, []any{"three"}, next(t, sub).Values)
+		synctest.Wait()
+		require.Len(t, d.list(), 1)
+		assert.ErrorIs(t, d.list()[0], errSSETooLarge)
+		assert.NotContains(t, d.list()[0].Error(), "SECRET")
+		assert.Len(t, f.requests(), 2)
+	})
+}
+
+func TestSubscribeDuplicateColumnsIsABadSchemaFrame(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var d drops
+		c, f := newFakeStream(t, func(n int, r *http.Request) (*http.Response, error) {
+			switch n {
+			case 1:
+				return sseOpen(r, schemaFrame("a"), rowFrame(1, "one"), schemaFrame("a", "a")), nil
+			case 2:
+				return sseOpen(r, schemaFrame("a", "a"), rowFrame(2, "x", "y")), nil
+			}
+			return sseOpen(r, schemaFrame("a"), rowFrame(2, "two")), nil
+		}, WithRetry(RetryPolicy{MinBackoff: time.Millisecond}))
+		sub, err := c.Subscribe(t.Context(), "t", &SubscribeOptions{OnDrop: d.on})
+		require.NoError(t, err)
+		defer func() { _ = sub.Close() }()
+		assert.Equal(t, []any{"one"}, next(t, sub).Values)
+		assert.Equal(t, []any{"two"}, next(t, sub).Values)
+		synctest.Wait()
+		require.Len(t, d.list(), 1)
+		assert.ErrorIs(t, d.list()[0], errBadSchema)
+		assert.Len(t, f.requests(), 3)
+	})
+}
+
+// The server's retry: field is a floor under every reconnect wait.
+func TestSubscribeHonoursTheRetryField(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c, f := newFakeStream(t, func(n int, r *http.Request) (*http.Response, error) {
+			if n == 1 {
+				return sseEnds(r, "retry: 5000\n\n", schemaFrame("a"), rowFrame(1, "one")), nil
+			}
+			return sseOpen(r, schemaFrame("a"), rowFrame(2, "two")), nil
+		})
+		sub, err := c.Subscribe(t.Context(), "t", nil)
+		require.NoError(t, err)
+		defer func() { _ = sub.Close() }()
+		assert.Equal(t, []any{"one"}, next(t, sub).Values)
+		assert.Equal(t, []any{"two"}, next(t, sub).Values)
+		assert.GreaterOrEqual(t, f.gap(1), 5*time.Second)
+	})
+}

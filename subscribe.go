@@ -84,6 +84,15 @@ type SubscribeOptions struct {
 	// reports, never events or Close. StateClosed comes last, exactly once,
 	// and can come after Close has returned.
 	OnState func(State)
+	// OnDrop, when set, is called when a frame is skipped for good: one that
+	// failed twice at the same place, across a reconnect (see
+	// [Client.Subscribe]). The error names the reason (a malformed frame, one
+	// over the size cap, a bad schema frame) and the frame's id when it has
+	// one, never its payload. It follows OnState's contract and shares its
+	// goroutine: called in order with the state reports, one call at a time,
+	// never under a lock of the SDK's, and a slow OnDrop delays only later
+	// reports, never events or Close.
+	OnDrop func(err error)
 }
 
 // Event is one row streamed from a table.
@@ -152,7 +161,7 @@ type Subscription struct {
 	since time.Time
 	// header is the caller's SubscribeOptions.Header, copied.
 	header http.Header
-	// notes delivers OnState calls; nil without OnState.
+	// notes delivers OnState and OnDrop calls; nil with neither.
 	notes *notifier
 
 	ctx    context.Context
@@ -168,6 +177,13 @@ type Subscription struct {
 	// The reader goroutine's own.
 	lastID string
 	state  State
+	// failed is the last frame that could not be decoded, to tell a corrupted
+	// connection (the frame is fine on the next one) from a frame that is bad
+	// at the source.
+	failed *frameKey
+	// retryFloor is the server's "retry:" request: a floor under every
+	// reconnect wait from then on.
+	retryFloor time.Duration
 
 	// The consumer's own.
 	cur Event
@@ -189,8 +205,8 @@ type Subscription struct {
 // redirect while credentialed, or a token source error), or when every attempt the [RetryPolicy] allows has failed: a
 // transport error, a 429 or a 5xx, honouring Retry-After.
 //
-// Once connected, a dropped connection, a retryable status or a malformed
-// frame is retried without limit, waiting per the RetryPolicy's backoff (the
+// Once connected, a dropped connection, a retryable status or a frame that
+// can't be decoded is retried without limit, waiting per the RetryPolicy's backoff (the
 // count starts over after a connection that delivered an event or stayed up
 // 30s), and resumes with Last-Event-ID set to the last event delivered. The
 // token source and the header func ([WithTokenSource], [WithHeaderFunc]) are
@@ -199,6 +215,15 @@ type Subscription struct {
 // connect up to the server's response headers, and never an established
 // connection. A refusal for good, as above, ends the subscription with that
 // error in Err.
+//
+// A frame that can't be decoded (not JSON, over the 32 MiB cap, or a schema
+// frame that is malformed or names a column twice) usually means a corrupted
+// connection, so the first time the stream reconnects from the last delivered
+// event. If the same frame fails again at the same place after that reconnect,
+// it is bad at the source: it is skipped, the resume point moves past it, the
+// stream goes on over the same connection, and SubscribeOptions.OnDrop is
+// called with the reason and the frame's id, never its payload. A server's
+// "retry:" field is kept as a floor under every later reconnect wait.
 //
 // The server announces the column names in an "event: schema" frame and then
 // sends each row as a positional array; Subscribe zips them into an [Event].
@@ -240,8 +265,8 @@ func (c *Client) Subscribe(ctx context.Context, table string, opts *SubscribeOpt
 		lastID: opts.ResumeID,
 		state:  -1, // none yet, so StateConnecting is reported
 	}
-	if opts.OnState != nil {
-		s.notes = newNotifier(opts.OnState)
+	if opts.OnState != nil || opts.OnDrop != nil {
+		s.notes = newNotifier(opts.OnState, opts.OnDrop)
 	}
 	ready := make(chan error, 1)
 	go s.run(ready)
@@ -322,30 +347,33 @@ func (s *Subscription) run(ready chan<- error) {
 	s.setState(StateClosed)
 }
 
-// notifier calls OnState on a goroutine of its own, so the reader, and Close
-// waiting on it, never wait on the caller's code. The queue is unbounded but
-// grows by at most one state per connection attempt.
+// notifier calls OnState and OnDrop on a goroutine of its own, in the order
+// they were pushed, so the reader, and Close waiting on it, never wait on the
+// caller's code. The queue is unbounded but grows by at most one state per
+// connection attempt, plus one entry per skipped frame.
 type notifier struct {
-	fn    func(State)
-	wake  chan struct{}
-	mu    sync.Mutex
-	queue []note
+	onState func(State)
+	onDrop  func(error)
+	wake    chan struct{}
+	mu      sync.Mutex
+	queue   []note
 }
 
 type note struct {
 	state State
-	ack   chan struct{} // closed once fn has returned for it; may be nil
+	drop  error         // set for an OnDrop call
+	ack   chan struct{} // closed once the call has returned; may be nil
 }
 
-func newNotifier(fn func(State)) *notifier {
-	n := &notifier{fn: fn, wake: make(chan struct{}, 1)}
+func newNotifier(onState func(State), onDrop func(error)) *notifier {
+	n := &notifier{onState: onState, onDrop: onDrop, wake: make(chan struct{}, 1)}
 	go n.run()
 	return n
 }
 
-func (n *notifier) push(st State, ack chan struct{}) {
+func (n *notifier) push(nt note) {
 	n.mu.Lock()
-	n.queue = append(n.queue, note{st, ack})
+	n.queue = append(n.queue, nt)
 	n.mu.Unlock()
 	select {
 	case n.wake <- struct{}{}:
@@ -365,11 +393,18 @@ func (n *notifier) run() {
 			nt := n.queue[0]
 			n.queue = n.queue[1:]
 			n.mu.Unlock()
-			n.fn(nt.state)
+			switch {
+			case nt.drop != nil:
+				if n.onDrop != nil {
+					n.onDrop(nt.drop)
+				}
+			case n.onState != nil:
+				n.onState(nt.state)
+			}
 			if nt.ack != nil {
 				close(nt.ack)
 			}
-			if nt.state == StateClosed {
+			if nt.drop == nil && nt.state == StateClosed {
 				return
 			}
 		}
@@ -427,6 +462,7 @@ func (s *Subscription) loop(ready chan<- error) (end error) {
 		if ae, ok := errors.AsType[*APIError](err); ok && ae.RetryAfter > 0 {
 			wait = min(ae.RetryAfter, s.c.retry.MaxBackoff)
 		}
+		wait = max(wait, s.retryFloor)
 		if werr := sleep(s.ctx, wait); werr != nil {
 			return fmt.Errorf("wavehouse: GET %s: %w while waiting to retry after: %s", streamPath, werr, err.Error())
 		}
@@ -531,6 +567,60 @@ var errNoSchema = errors.New("row before the schema frame")
 // errArity is a row that doesn't match the announced columns.
 var errArity = errors.New("row length differs from the announced columns")
 
+// The reasons a frame can't be decoded.
+var (
+	errFrameMalformed = errors.New("malformed JSON")
+	errBadSchema      = errors.New("bad schema frame")
+)
+
+// frameKey is where an undecodable frame sat: after which delivered event
+// (the resume point), with which id, and how many frames of its kind came
+// between that event and it. A reconnect resumes at the same point, so the
+// same frame bad again has the same key; a corrupted connection does not.
+type frameKey struct {
+	resume, id, kind string
+	pos              int
+}
+
+// frameError is a frame that was skipped. It names the reason and the id, never
+// the payload.
+type frameError struct {
+	reason error
+	id     string
+}
+
+func (e *frameError) Error() string {
+	msg := "wavehouse: GET " + streamPath + ": skipped a frame"
+	if e.id != "" {
+		msg += " (id " + e.id + ")"
+	}
+	return msg + ": " + e.reason.Error()
+}
+
+func (e *frameError) Unwrap() error { return e.reason }
+
+// frameFault handles a frame that can't be decoded, and reports whether to
+// skip it. The first time, it only records where the frame sat and returns
+// false: the connection is probably corrupt, and the reconnect resumes from
+// the last delivered event. If the frame fails again at the same place, it is
+// bad at the source, so it is skipped: the resume point moves to its id, if it
+// has one, and OnDrop hears of it.
+func (s *Subscription) frameFault(key frameKey, reason error) bool {
+	if s.failed == nil || *s.failed != key {
+		k := key
+		s.failed = &k
+		return false
+	}
+	s.failed = nil
+	if key.id != "" {
+		s.lastID = key.id
+	}
+	if s.notes != nil {
+		s.notes.push(note{drop: &frameError{reason: reason, id: key.id}})
+	}
+	return true
+}
+
 // consume reads one connection until it ends, handing each row to the
 // consumer, and reports whether it delivered any. It always returns an error
 // saying why the connection ended, io.EOF for a clean end.
@@ -546,29 +636,55 @@ func (s *Subscription) consume(res *http.Response) (delivered bool, err error) {
 	rd := newSSEReader(res.Body, s.lastID)
 	var columns []string
 	haveSchema := false
+	// Frames of each kind seen since the last delivery or skip, for frameKey.
+	var seen = map[string]int{}
 	for {
 		f, err := rd.next()
+		if rd.retry > 0 {
+			s.retryFloor = rd.retry
+		}
+		if errors.Is(err, errSSETooLarge) {
+			key := frameKey{resume: s.lastID, id: f.id, kind: "message", pos: seen["message"]}
+			if !s.frameFault(key, errSSETooLarge) {
+				return delivered, err
+			}
+			seen = map[string]int{}
+			continue
+		}
 		if err != nil {
 			return delivered, err
 		}
 		switch f.event {
 		case "schema":
-			var frame struct {
-				Columns []string `json:"columns"`
+			key := frameKey{resume: s.lastID, id: f.id, kind: "schema", pos: seen["schema"]}
+			seen["schema"]++
+			cols, err := decodeSchema(f.data)
+			if err != nil {
+				if !s.frameFault(key, err) {
+					return delivered, fmt.Errorf("schema frame: %w", err)
+				}
+				seen = map[string]int{}
+				continue
 			}
-			if err := json.Unmarshal([]byte(f.data), &frame); err != nil {
-				return delivered, fmt.Errorf("schema frame: %w", err)
-			}
-			columns = frame.Columns
+			columns = cols
 			haveSchema = true
 		case "message":
 			if !haveSchema {
 				// The server announces the columns before the first row of every connection.
 				return delivered, fmt.Errorf("data frame %s: %w", f.id, errNoSchema)
 			}
+			key := frameKey{resume: s.lastID, id: f.id, kind: "message", pos: seen["message"]}
+			seen["message"]++
 			ev, err := decodeEvent(f, columns, s.table)
+			if errors.Is(err, errFrameMalformed) {
+				if !s.frameFault(key, err) {
+					return delivered, fmt.Errorf("data frame %s: %w", f.id, err)
+				}
+				seen = map[string]int{}
+				continue
+			}
 			if err != nil {
-				// Dropped, not delivered: the reconnect resumes from the last event that was.
+				// An arity mismatch: dropped, not delivered; the reconnect resumes from the last event that was.
 				return delivered, err
 			}
 			select {
@@ -577,6 +693,8 @@ func (s *Subscription) consume(res *http.Response) (delivered bool, err error) {
 				return delivered, s.ctx.Err()
 			}
 			delivered = true
+			s.failed = nil
+			seen = map[string]int{}
 			if ev.ID != "" {
 				s.lastID = ev.ID
 			}
@@ -584,7 +702,27 @@ func (s *Subscription) consume(res *http.Response) (delivered bool, err error) {
 	}
 }
 
-// decodeEvent zips a data frame's positional row with columns.
+// decodeSchema reads a schema frame's column names. A name twice is refused:
+// the columns would collide in Event.Row.
+func decodeSchema(data string) ([]string, error) {
+	var frame struct {
+		Columns []string `json:"columns"`
+	}
+	if err := json.Unmarshal([]byte(data), &frame); err != nil {
+		return nil, fmt.Errorf("%w: %w", errBadSchema, errFrameMalformed)
+	}
+	seen := make(map[string]struct{}, len(frame.Columns))
+	for _, c := range frame.Columns {
+		if _, dup := seen[c]; dup {
+			return nil, fmt.Errorf("%w: duplicate column name", errBadSchema)
+		}
+		seen[c] = struct{}{}
+	}
+	return frame.Columns, nil
+}
+
+// decodeEvent zips a data frame's positional row with columns. A frame that
+// isn't JSON is errFrameMalformed; the error never carries the payload.
 func decodeEvent(f sseEvent, columns []string, table string) (Event, error) {
 	var frame struct {
 		TableName         string `json:"table_name"`
@@ -594,7 +732,7 @@ func decodeEvent(f sseEvent, columns []string, table string) (Event, error) {
 	dec := json.NewDecoder(bytes.NewReader([]byte(f.data)))
 	dec.UseNumber()
 	if err := dec.Decode(&frame); err != nil {
-		return Event{}, fmt.Errorf("data frame: %w", err)
+		return Event{}, errFrameMalformed
 	}
 	if len(frame.Row) != len(columns) {
 		return Event{}, fmt.Errorf("data frame %s: %w: %d values, %d columns", f.id, errArity, len(frame.Row), len(columns))
@@ -616,7 +754,7 @@ func (s *Subscription) setState(st State) {
 	}
 	s.state = st
 	if s.notes != nil {
-		s.notes.push(st, nil)
+		s.notes.push(note{state: st})
 	}
 }
 
@@ -629,7 +767,7 @@ func (s *Subscription) setStateWait(st State) {
 	}
 	s.state = st
 	ack := make(chan struct{})
-	s.notes.push(st, ack)
+	s.notes.push(note{state: st, ack: ack})
 	select {
 	case <-ack:
 	case <-s.ctx.Done():

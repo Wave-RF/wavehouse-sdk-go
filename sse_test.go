@@ -8,6 +8,7 @@ import (
 	"testing"
 	"testing/iotest"
 	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -119,7 +120,20 @@ func TestSSEReaderBounds(t *testing.T) {
 	maxSSELine = 64
 	t.Cleanup(func() { maxSSELine = old })
 
-	_, err := readAllSSE(strings.NewReader("data: "+strings.Repeat("x", 100)+"\n\n"), "")
+	// An oversize event is stepped over: the reader is still usable.
+	evs, err := readAllSSE(strings.NewReader("id: 1\ndata: "+strings.Repeat("x", 100)+"\ndata: more\n\n"), "")
+	require.ErrorIs(t, err, errSSETooLarge)
+	assert.Empty(t, evs)
+	rd := newSSEReader(strings.NewReader("id: 7\ndata: "+strings.Repeat("x", 100)+"\n\nid: 8\ndata: ok\n\n"), "")
+	ev, err := rd.next()
+	require.ErrorIs(t, err, errSSETooLarge)
+	assert.Equal(t, "7", ev.id)
+	ev, err = rd.next()
+	require.NoError(t, err)
+	assert.Equal(t, sseEvent{event: "message", data: "ok", id: "8"}, ev)
+
+	// A single line past the cap and its slack ends the stream.
+	_, err = readAllSSE(strings.NewReader("data: "+strings.Repeat("x", 64+sseLineSlack+10)+"\n\n"), "")
 	require.ErrorIs(t, err, bufio.ErrTooLong)
 
 	many := strings.Repeat("data: "+strings.Repeat("x", 20)+"\n", 4) + "\n"
@@ -130,4 +144,17 @@ func TestSSEReaderBounds(t *testing.T) {
 	boom := errors.New("reset")
 	_, err = readAllSSE(io.MultiReader(strings.NewReader("data: a\n"), iotest.ErrReader(boom)), "")
 	require.ErrorIs(t, err, boom)
+}
+
+func TestSSEReaderRetryField(t *testing.T) {
+	rd := newSSEReader(strings.NewReader("retry: 1500\n\ndata: a\n\nretry: abc\ndata: b\n\nretry: -5\ndata: c\n\n"), "")
+	_, err := rd.next()
+	require.NoError(t, err)
+	assert.Equal(t, 1500*time.Millisecond, rd.retry)
+	_, err = rd.next()
+	require.NoError(t, err)
+	assert.Equal(t, 1500*time.Millisecond, rd.retry, "a non-numeric retry is ignored")
+	_, err = rd.next()
+	require.NoError(t, err)
+	assert.Equal(t, 1500*time.Millisecond, rd.retry, "a negative retry is ignored")
 }

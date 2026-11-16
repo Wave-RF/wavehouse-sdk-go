@@ -5,13 +5,19 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // maxSSELine bounds one line, and one event's data, read from a stream. A row
 // arrives as one data line, and the server accepts ingest bodies of up to
 // 16 MiB, so twice that leaves room for any row it can publish.
 var maxSSELine = 32 << 20 // a var so tests can lower it
+
+// sseLineSlack is how much longer than maxSSELine a line may be, for its field
+// name.
+const sseLineSlack = 4096
 
 // utf8BOM is skipped at the start of a stream, as the standard says.
 var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
@@ -33,19 +39,27 @@ type sseReader struct {
 	sc      *bufio.Scanner
 	lastID  string
 	started bool
+	// retry is the last "retry:" field the server sent, the reconnection time
+	// it asks for; 0 until it sends one.
+	retry time.Duration
 }
 
 // newSSEReader reads r; lastID seeds the last event ID buffer, as a browser
 // carries it across a reconnect.
 func newSSEReader(r io.Reader, lastID string) *sseReader {
 	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, min(4096, maxSSELine)), maxSSELine)
+	// The slack lets a data line of exactly the cap in (its "data: " prefix
+	// counts toward the line), so an oversize event surfaces as errSSETooLarge,
+	// which the reader can step over, not as the scanner's fatal ErrTooLong.
+	sc.Buffer(make([]byte, 0, min(4096, maxSSELine)), maxSSELine+sseLineSlack)
 	sc.Split(splitSSELines())
 	return &sseReader{sc: sc, lastID: lastID}
 }
 
 // next returns the next event, io.EOF at the end of the body, or the read
-// error, bufio.ErrTooLong included.
+// error, bufio.ErrTooLong included. An event whose data exceeds the cap is
+// read to its end and reported as errSSETooLarge with the id it carried (the
+// reader is still usable); any other error ends the stream.
 func (r *sseReader) next() (sseEvent, error) {
 	var event string
 	var data strings.Builder
@@ -75,7 +89,7 @@ func (r *sseReader) next() (sseEvent, error) {
 			event = string(value)
 		case "data":
 			if data.Len()+len(value)+1 > maxSSELine {
-				return sseEvent{}, errSSETooLarge
+				return r.skipEvent()
 			}
 			data.Write(value)
 			data.WriteByte('\n')
@@ -83,14 +97,37 @@ func (r *sseReader) next() (sseEvent, error) {
 			if bytes.IndexByte(value, 0) < 0 {
 				r.lastID = string(value)
 			}
+		case "retry":
+			// Digits only, as the standard says; anything else is ignored.
+			if ms, err := strconv.ParseUint(string(value), 10, 31); err == nil {
+				r.retry = time.Duration(ms) * time.Millisecond
+			}
 		}
-		// "retry" sets a browser's reconnection delay; the RetryPolicy decides ours, so it is ignored like
-		// any unknown field.
 	}
 	if err := r.sc.Err(); err != nil {
 		return sseEvent{}, err
 	}
 	return sseEvent{}, io.EOF
+}
+
+// skipEvent reads on to the end of the current event, still honouring its id
+// and retry fields, and reports it as errSSETooLarge.
+func (r *sseReader) skipEvent() (sseEvent, error) {
+	for r.sc.Scan() {
+		line := r.sc.Bytes()
+		if len(line) == 0 {
+			break
+		}
+		field, value, _ := bytes.Cut(line, []byte(":"))
+		value = bytes.TrimPrefix(value, []byte(" "))
+		if string(field) == "id" && bytes.IndexByte(value, 0) < 0 {
+			r.lastID = string(value)
+		}
+	}
+	if err := r.sc.Err(); err != nil {
+		return sseEvent{}, err
+	}
+	return sseEvent{id: r.lastID}, errSSETooLarge
 }
 
 // splitSSELines splits on CRLF, LF or CR without waiting for the byte after a
