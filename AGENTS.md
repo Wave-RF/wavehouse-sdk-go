@@ -6,25 +6,25 @@ The Go client for [WaveHouse](https://github.com/Wave-RF/WaveHouse). Module `git
 
 - The package is flat at the repo root: `wavehouse.go` (client and config), `http.go` (REST transport, retries), `query_builder.go` and `table.go` (queries and inserts), `stream.go` and `live_query.go` (SSE and live queries), `pipes.go`, `policy.go`, `schema.go`, `dlq.go`, `sys.go`, `types.go`, `errors.go`.
 - `testdata/wire_cases.json` holds the request conformance cases. The JS SDK is meant to replay the same cases.
-- `e2e_test.go` holds the live tests, behind the `e2e` build tag.
+- `e2e/` holds the live tests, as a module of their own so their dependencies stay out of the SDK's `go.mod`. They start ClickHouse and the server's `ghcr.io/wave-rf/wavehouse:dev` image with testcontainers; `e2e/testdata/settings/` is that server's settings directory.
 - `scripts/` and `.github/` hold the files kept in step with `wavehouse-sdk-js` (see *Files kept in step*) plus this repo's `ci.yml`, `release.yml` and `scripts/ci/release.sh`.
 
 ## Commands
 
 - `make ci` runs what CI runs: gofumpt check, `go vet`, golangci-lint (pinned in the Makefile, installed into `.bin/`), race tests with the coverage floor, shellcheck and actionlint.
 - `make fix` applies formatting and lint fixes.
-- `make test-e2e` runs the live tests against the server at `WAVEHOUSE_URL`. It is not part of `ci`.
+- `make test-e2e` runs the live tests. It needs Docker, so it is not part of `make ci`; CI runs it as its own job. `WAVEHOUSE_IMAGE` picks another server image, and `WAVEHOUSE_URL` with an admin `WAVEHOUSE_ADMIN_TOKEN` points it at a running server instead.
 
 ## Rules
 
-- **Standard library only.** The SDK has no third-party runtime dependencies, SSE framing included, and `go.mod` carries no `require` lines. Adding one needs a maintainer's agreement first. Dev tools run through `go run <module>@<version>` or `.bin/`, not `tool` directives, so they stay out of `go.mod`.
+- **Standard library only at runtime.** The SDK has no third-party runtime dependencies, SSE framing included, and the root `go.mod` carries no `require` lines. Adding one needs a maintainer's agreement first. Test-only dependencies are welcome where they help (the live tests use testify and testcontainers-go, as the server does), but they go in a module of their own such as `e2e/`, never the root one. Dev tools run through `go run <module>@<version>` or `.bin/`, not `tool` directives.
 - The coverage floor is in the Makefile. Raise it when coverage rises; don't lower it to land a change.
 
 ## Tests today
 
 - **Unit:** `*_test.go` against `httptest` servers.
 - **Request conformance:** `conformance_test.go` replays `testdata/wire_cases.json` and checks each call's method, path, content type and body.
-- **Live:** `e2e_test.go` behind the `e2e` build tag; not run in CI yet.
+- **Live:** `e2e/`, against a real server started with testcontainers; run in CI by the `Live tests` job.
 - **Server end-to-end:** none yet.
 
 ## Known gap
