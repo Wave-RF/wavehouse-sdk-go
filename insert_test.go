@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math/big"
 	"net/http"
 	"strings"
 	"testing"
@@ -246,4 +247,46 @@ func TestInsertRefusesReadState(t *testing.T) {
 	// An empty Select() is no state.
 	_, err := c.From("t").Select().Insert(t.Context(), map[string]any{"a": 1})
 	require.NoError(t, err)
+}
+
+// A pointer-receiver MarshalJSON (big.Int, nested too) applies to every row,
+// as it does for json.Marshal(&row).
+func TestInsertUsesPointerReceiverMarshalers(t *testing.T) {
+	type row struct {
+		N     big.Int             `json:"n"`
+		Inner struct{ M big.Int } `json:"inner"`
+	}
+	mk := func(n int64) row {
+		var r row
+		r.N.SetInt64(n)
+		r.Inner.M.SetInt64(n * 10)
+		return r
+	}
+	a, b := mk(5), mk(6)
+	cases := map[string]struct {
+		rows any
+		want []row
+	}{
+		"slice":            {[]row{a, b}, []row{a, b}},
+		"array":            {[2]row{a, b}, []row{a, b}},
+		"single value":     {a, []row{a}},
+		"single pointer":   {&a, []row{a}},
+		"slice of ptrs":    {[]*row{&a, &b}, []row{a, b}},
+		"slice of any":     {[]any{a, &b}, []row{a, b}},
+		"pointer to slice": {&[]row{a, b}, []row{a, b}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			body, n, err := encodeNDJSON(tc.rows)
+			require.NoError(t, err)
+			require.Equal(t, len(tc.want), n)
+			lines := strings.Split(string(body), "\n")
+			for i, w := range tc.want {
+				exp, err := json.Marshal(&w)
+				require.NoError(t, err)
+				assert.Equal(t, string(exp), lines[i])
+				assert.NotContains(t, lines[i], "{}")
+			}
+		})
+	}
 }

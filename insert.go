@@ -214,14 +214,32 @@ func rowList(rows any) ([]any, error) {
 		return nil, errors.New("rows is nil")
 	}
 	if k := v.Kind(); k != reflect.Slice && k != reflect.Array {
-		return []any{v.Interface()}, nil
+		return []any{addressable(v)}, nil
 	}
 	if v.Type().Elem().Kind() == reflect.Uint8 {
 		return nil, errors.New("rows is a byte slice; pass pre-encoded NDJSON to InsertNDJSON")
 	}
 	items := make([]any, v.Len())
 	for i := range items {
-		items[i] = v.Index(i).Interface()
+		items[i] = addressable(v.Index(i))
 	}
 	return items, nil
+}
+
+// addressable returns a value for json.Marshal that sees pointer-receiver
+// marshalers (big.Int, nested too) as json.Marshal(&row) does: encoding/json
+// only calls them on addressable values. A caller's pointer is kept as is.
+func addressable(v reflect.Value) any {
+	for v.Kind() == reflect.Interface && !v.IsNil() {
+		v = v.Elem()
+	}
+	if v.Kind() == reflect.Pointer {
+		return v.Interface()
+	}
+	if !v.CanAddr() {
+		n := reflect.New(v.Type())
+		n.Elem().Set(v)
+		v = n.Elem()
+	}
+	return v.Addr().Interface()
 }
