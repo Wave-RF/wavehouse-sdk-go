@@ -326,6 +326,25 @@ func TestSubscribeRowWithoutSchema(t *testing.T) {
 	})
 }
 
+// Data before the schema frame is a protocol error even when its row is empty
+// and so matches the zero announced columns: it reconnects, never delivers.
+func TestSubscribeDataBeforeSchemaIsAProtocolError(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c, f := newFakeStream(t, func(n int, r *http.Request) (*http.Response, error) {
+			if n == 1 {
+				return sseOpen(r, rowFrame(1)), nil
+			}
+			return sseOpen(r, schemaFrame("a"), rowFrame(1, 7)), nil
+		})
+		sub, err := c.Subscribe(t.Context(), "t", nil)
+		require.NoError(t, err)
+		defer func() { _ = sub.Close() }()
+		ev := next(t, sub)
+		assert.Equal(t, []any{json.Number("7")}, ev.Values)
+		assert.Len(t, f.requests(), 2)
+	})
+}
+
 func TestSubscribeMalformedFrames(t *testing.T) {
 	for name, frame := range map[string]string{
 		"schema": "event: schema\ndata: {nope\n\n",

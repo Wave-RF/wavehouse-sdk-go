@@ -475,6 +475,9 @@ func isEventStream(contentType string) bool {
 	return err == nil && mt == "text/event-stream"
 }
 
+// errNoSchema is a row that arrives before any schema frame.
+var errNoSchema = errors.New("row before the schema frame")
+
 // errArity is a row that doesn't match the announced columns.
 var errArity = errors.New("row length differs from the announced columns")
 
@@ -492,6 +495,7 @@ func (s *Subscription) consume(res *http.Response) (delivered bool, err error) {
 
 	rd := newSSEReader(res.Body, s.lastID)
 	var columns []string
+	haveSchema := false
 	for {
 		f, err := rd.next()
 		if err != nil {
@@ -499,14 +503,19 @@ func (s *Subscription) consume(res *http.Response) (delivered bool, err error) {
 		}
 		switch f.event {
 		case "schema":
-			var announced struct {
+			var frame struct {
 				Columns []string `json:"columns"`
 			}
-			if err := json.Unmarshal([]byte(f.data), &announced); err != nil {
+			if err := json.Unmarshal([]byte(f.data), &frame); err != nil {
 				return delivered, fmt.Errorf("schema frame: %w", err)
 			}
-			columns = announced.Columns
+			columns = frame.Columns
+			haveSchema = true
 		case "message":
+			if !haveSchema {
+				// The server announces the columns before the first row of every connection.
+				return delivered, fmt.Errorf("data frame %s: %w", f.id, errNoSchema)
+			}
 			ev, err := decodeEvent(f, columns, s.table)
 			if err != nil {
 				// Dropped, not delivered: the reconnect resumes from the last event that was.
