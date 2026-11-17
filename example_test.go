@@ -346,10 +346,11 @@ func ExampleQuery_Insert() {
 		log.Fatal(err)
 	}
 	type click struct {
-		EventID string `json:"event_id"` // the server's dedupe id field, when it has one
-		Page    string `json:"page"`
+		Page   string  `json:"page"`
+		Button string  `json:"button"`
+		Score  float64 `json:"score"`
 	}
-	res, err := wh.From("clicks").Insert(context.Background(), []click{{"e1", "/home"}, {"e2", "/about"}})
+	res, err := wh.From("clicks").Insert(context.Background(), []click{{"/home", "signup", 12.5}, {"/about", "contact", 3}})
 	// The server answers 200 even when it rejects records: the result is returned
 	// with an *InsertError saying which.
 	if ie, ok := errors.AsType[*wavehouse.InsertError](err); ok {

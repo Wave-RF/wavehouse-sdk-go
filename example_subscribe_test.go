@@ -20,7 +20,7 @@ func ExampleClient_Subscribe() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 
 	sub, err := wh.Subscribe(ctx, "clicks", &wavehouse.SubscribeOptions{
-		Since: time.Now().Add(-time.Hour), // replay the last hour first
+		Since: time.Now().Add(-10 * time.Minute), // replay the last 10 minutes first (the server keeps 15 by default)
 	})
 	// An unknown table is no error: the subscription stays live and empty, so
 	// check the table first with TableSchema or a Limit(1) query.
