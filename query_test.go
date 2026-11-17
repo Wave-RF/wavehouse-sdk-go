@@ -332,3 +332,52 @@ func TestQueryRetriesRead(t *testing.T) {
 	assert.Len(t, rows, 1)
 	assert.Len(t, rec.requests(), 2)
 }
+
+// The field types Scan's doc recommends read a 0.2.x server's rows and those
+// of a server that renders with ClickHouse (Wave-RF/WaveHouse#882) alike.
+func TestScanFieldsForEveryServer(t *testing.T) {
+	type row struct {
+		Price json.Number `json:"price"`
+		F     Float       `json:"f"`
+		Day   string      `json:"day"`
+		TS    time.Time   `json:"ts"`
+	}
+	ts := time.Date(2026, 6, 21, 4, 0, 0, 0, time.UTC)
+	for name, tc := range map[string]struct {
+		body string
+		f    float64
+	}{
+		"0.2.x":                  {`[{"price":"12345678901234567.0123456789","f":1.5,"day":"2026-06-21T00:00:00Z","ts":"2026-06-21T04:00:00Z"}]`, 1.5},
+		"rendered by ClickHouse": {`[{"price":12345678901234567.0123456789,"f":"-inf","day":"2026-06-21","ts":"2026-06-21T04:00:00.000Z"}]`, math.Inf(-1)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var rows []row
+			require.NoError(t, newRecorder(t, reply(200, tc.body)).client(t).From("t").Scan(t.Context(), &rows))
+			require.Len(t, rows, 1)
+			assert.Equal(t, Float(tc.f), rows[0].F)
+			assert.Equal(t, json.Number("12345678901234567.0123456789"), rows[0].Price, "exact either way")
+			assert.True(t, ts.Equal(rows[0].TS))
+			day, err := Row{"day": rows[0].Day}.Time("day")
+			require.NoError(t, err)
+			assert.Equal(t, time.Date(2026, 6, 21, 0, 0, 0, 0, time.UTC), day)
+		})
+	}
+
+	// What the doc warns of: each of these fails the whole Scan.
+	type quoted struct {
+		V float64 `json:",string"`
+	}
+	for name, tc := range map[string]struct {
+		body string
+		dst  any
+	}{
+		"NaN into float64":       {`[{"v":"nan"}]`, &[]struct{ V float64 }{}},
+		"bare Date into time":    {`[{"v":"2026-06-21"}]`, &[]struct{ V time.Time }{}},
+		"Decimal into string":    {`[{"v":12.5}]`, &[]struct{ V string }{}},
+		"Decimal with ,string":   {`[{"v":12.5}]`, &[]quoted{}},
+		"0.2.x Decimal to float": {`[{"v":"12.5"}]`, &[]struct{ V float64 }{}},
+	} {
+		err := newRecorder(t, reply(200, tc.body)).client(t).From("t").Scan(t.Context(), tc.dst)
+		require.ErrorContains(t, err, "decode response", name)
+	}
+}

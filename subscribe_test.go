@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1166,4 +1167,33 @@ func TestSubscribeHonoursTheRetryField(t *testing.T) {
 		assert.Equal(t, []any{"two"}, next(t, sub).Values)
 		assert.GreaterOrEqual(t, f.gap(1), 5*time.Second)
 	})
+}
+
+// A stream row from a server that renders with ClickHouse
+// (Wave-RF/WaveHouse#882), as measured: the omitted ts holds its DEFAULT at
+// the column's scale, and a NaN is a string.
+func TestEventDecodeClickHouseRendered(t *testing.T) {
+	ev := Event{
+		Columns: []string{"big", "price", "f", "d", "ts"},
+		Values: []any{
+			json.Number("18446744073709551615"), json.Number("12345678901234567.0123456789"), "nan",
+			"2026-06-21", "2026-11-17T12:56:10.870Z",
+		},
+	}
+	var dst struct {
+		Big   uint64      `json:"big"`
+		Price json.Number `json:"price"`
+		F     Float       `json:"f"`
+		D     string      `json:"d"`
+		TS    time.Time   `json:"ts"`
+	}
+	require.NoError(t, ev.Decode(&dst))
+	assert.Equal(t, uint64(math.MaxUint64), dst.Big)
+	assert.Equal(t, json.Number("12345678901234567.0123456789"), dst.Price)
+	assert.True(t, math.IsNaN(float64(dst.F)))
+	assert.Equal(t, "2026-06-21", dst.D)
+	assert.Equal(t, time.Date(2026, 11, 17, 12, 56, 10, 870_000_000, time.UTC), dst.TS)
+
+	var plain struct{ F float64 }
+	require.ErrorContains(t, ev.Decode(&plain), "wavehouse: Event.Decode", "a float64 field can't hold the NaN")
 }

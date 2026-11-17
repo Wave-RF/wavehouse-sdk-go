@@ -83,6 +83,24 @@ func TestInsert(t *testing.T) {
 		bad["no_such_column"] = 1
 		res, err := c.From("e2e_events").Insert(t.Context(), []map[string]any{eventRow(name, 1), bad})
 		require.Error(t, err)
+		if stack.clickhouseRows {
+			// ClickHouse's parser refuses the whole body, as its INSERT would, and nothing is published.
+			assert.Nil(t, res)
+			apiErr, ok := errors.AsType[*wavehouse.APIError](err)
+			require.True(t, ok, "err %v is not an *APIError", err)
+			assert.Equal(t, 400, apiErr.StatusCode)
+			assert.Equal(t, "clickhouse.rejected", apiErr.Code)
+			assert.Equal(t, 117, apiErr.ExceptionCode)
+			assert.True(t, strings.HasPrefix(apiErr.Message, "record 2: "), "message %q", apiErr.Message)
+			assert.False(t, wavehouse.IsRetryable(err))
+			// A later row of the same table landing shows the refused body's first row never will.
+			after := uniqueName(t)
+			_, err := c.From("e2e_events").Insert(t.Context(), eventRow(after, 1))
+			require.NoError(t, err)
+			waitRows(t, c, after, 1)
+			assert.Zero(t, countRows(t, c, name), "the good record of a refused body was published")
+			return
+		}
 		ie, ok := errors.AsType[*wavehouse.InsertError](err)
 		require.True(t, ok, "err %v is not an *InsertError", err)
 		require.NotNil(t, res, "the result comes back with the error")
@@ -259,9 +277,9 @@ func TestQueryNumbers(t *testing.T) {
 	require.NoError(t, err, "%+v", res)
 
 	type number struct {
-		Big    uint64 `json:"big"`
-		Signed int64  `json:"signed"`
-		Price  string `json:"price"` // a Decimal comes back as a JSON string
+		Big    uint64      `json:"big"`
+		Signed int64       `json:"signed"`
+		Price  json.Number `json:"price"` // reads a Decimal as a 0.2.x server's string or a newer one's number
 	}
 	var rows []number
 	require.Eventually(t, func() bool {
@@ -269,7 +287,7 @@ func TestQueryNumbers(t *testing.T) {
 		err := c.From("e2e_numbers").Where("event_id", wavehouse.Eq, id).Select("big", "signed", "price").Scan(t.Context(), &rows)
 		return err == nil && len(rows) == 1
 	}, 30*time.Second, 200*time.Millisecond)
-	assert.Equal(t, number{Big: math.MaxUint64, Signed: math.MinInt64, Price: price}, rows[0])
+	assert.Equal(t, number{Big: math.MaxUint64, Signed: math.MinInt64, Price: json.Number(price)}, rows[0])
 
 	fetched, err := c.From("e2e_numbers").Where("event_id", wavehouse.Eq, id).Select("big").Fetch(t.Context())
 	require.NoError(t, err)
@@ -319,6 +337,46 @@ func TestRowAccessors(t *testing.T) {
 	ts, err := ev[0].Time("ts") // a DateTime64(3)
 	require.NoError(t, err, "wire value %#v", ev[0]["ts"])
 	assert.WithinDuration(t, time.Now(), ts, 5*time.Minute)
+}
+
+// TestFloatNonFinite round-trips a NaN and both infinities through Insert and Scan. A 0.2.x
+// server answers a query holding one with a 500; from Wave-RF/WaveHouse#882 on it renders
+// them as "nan", "inf" and "-inf".
+func TestFloatNonFinite(t *testing.T) {
+	if !stack.clickhouseRows {
+		t.Skip("a 0.2.x server can't render a NaN or an infinity")
+	}
+	c := newClient(t)
+	name := uniqueName(t)
+	type event struct {
+		EventID string          `json:"event_id"`
+		Name    string          `json:"name"`
+		Value   wavehouse.Float `json:"value"`
+	}
+	want := []float64{math.Inf(-1), 1.5, math.Inf(1), math.NaN()}
+	rows := make([]event, len(want))
+	for i, v := range want {
+		rows[i] = event{EventID: fmt.Sprintf("%s-%d", name, i), Name: name, Value: wavehouse.Float(v)}
+	}
+	res, err := c.From("e2e_events").Insert(t.Context(), rows)
+	require.NoError(t, err, "%+v", res)
+	waitRows(t, c, name, uint64(len(want)))
+
+	var got []event
+	require.NoError(t, c.From("e2e_events").Where("name", wavehouse.Eq, name).OrderBy("event_id", wavehouse.Asc).Scan(t.Context(), &got))
+	require.Len(t, got, len(want))
+	for i, v := range want[:3] {
+		assert.Equal(t, wavehouse.Float(v), got[i].Value, "row %d", i)
+	}
+	assert.True(t, math.IsNaN(float64(got[3].Value)))
+
+	fetched, err := c.From("e2e_events").Where("name", wavehouse.Eq, name).OrderBy("event_id", wavehouse.Asc).Select("value").Fetch(t.Context())
+	require.NoError(t, err)
+	require.Len(t, fetched, len(want))
+	assert.Equal(t, "-inf", fetched[0]["value"], "the wire spelling")
+	f, err := fetched[3].Float64("value")
+	require.NoError(t, err)
+	assert.True(t, math.IsNaN(f))
 }
 
 func TestInsertRefusesReadState(t *testing.T) {

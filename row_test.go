@@ -119,3 +119,87 @@ func TestRowAccessorsGoValues(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, now.Equal(got))
 }
+
+// A row as a server that renders with ClickHouse (Wave-RF/WaveHouse#882)
+// sends it, its bytes as measured: a Decimal as a number, a NaN or infinity
+// as a string, a Date bare and a DateTime64(3) at its scale.
+func TestRowAccessorsClickHouseRendered(t *testing.T) {
+	rec := newRecorder(t, reply(200, `[{"price":12345678901234567.0123456789,"nan":"nan","inf":"inf","ninf":"-inf",`+
+		`"d":"2026-06-21","whole":"2026-06-21T04:00:00.000Z","frac":"2026-06-21T04:00:00.120Z"}]`))
+	rows, err := rec.client(t).From("t").Fetch(t.Context())
+	require.NoError(t, err)
+	r := rows[0]
+
+	dec, err := r.String("price")
+	require.NoError(t, err)
+	assert.Equal(t, "12345678901234567.0123456789", dec, "every digit, as the 0.2.x string kept them")
+	df, err := r.Float64("price")
+	require.NoError(t, err)
+	assert.InDelta(t, 1.2345678901234567e16, df, 4)
+
+	for col, want := range map[string]float64{"inf": math.Inf(1), "ninf": math.Inf(-1)} {
+		f, err := r.Float64(col)
+		require.NoError(t, err, col)
+		assert.Equal(t, want, f, col)
+	}
+	nan, err := r.Float64("nan")
+	require.NoError(t, err)
+	assert.True(t, math.IsNaN(nan))
+
+	d, err := r.Time("d")
+	require.NoError(t, err)
+	assert.Equal(t, time.Date(2026, 6, 21, 0, 0, 0, 0, time.UTC), d)
+	whole, err := r.Time("whole")
+	require.NoError(t, err)
+	frac, err := r.Time("frac")
+	require.NoError(t, err)
+	// As strings ".000Z" < ".120Z" but "00Z" > ".120Z"; as times the scale doesn't matter.
+	trimmed, err := Row{"t": "2026-06-21T04:00:00Z"}.Time("t")
+	require.NoError(t, err)
+	assert.True(t, whole.Equal(trimmed), "0.2.x's trimmed spelling is the same instant")
+	assert.True(t, trimmed.Before(frac))
+	assert.Greater(t, "2026-06-21T04:00:00Z", "2026-06-21T04:00:00.120Z", "which string order gets wrong")
+}
+
+func TestFloatUnmarshal(t *testing.T) {
+	for in, want := range map[string]float64{
+		`1.5`: 1.5, `-2`: -2, `1e3`: 1000, `"1.5"`: 1.5,
+		`"inf"`: math.Inf(1), `"-inf"`: math.Inf(-1), `"+inf"`: math.Inf(1),
+	} {
+		var f Float
+		require.NoError(t, json.Unmarshal([]byte(in), &f), in)
+		assert.Equal(t, Float(want), f, in)
+	}
+	var nan Float
+	require.NoError(t, json.Unmarshal([]byte(`"nan"`), &nan))
+	assert.True(t, math.IsNaN(float64(nan)))
+
+	kept := Float(7)
+	require.NoError(t, json.Unmarshal([]byte(`null`), &kept))
+	assert.Equal(t, Float(7), kept, "null leaves it unchanged")
+	var p *Float
+	require.NoError(t, json.Unmarshal([]byte(`null`), &p))
+	assert.Nil(t, p, "a *Float tells a NULL apart")
+
+	for _, in := range []string{`"abc"`, `true`, `{}`, `""`, `"1e400"`} {
+		var f Float
+		require.ErrorContains(t, json.Unmarshal([]byte(in), &f), "wavehouse: Float", in)
+	}
+	// encoding/json passes only valid JSON; a direct call may not.
+	require.ErrorContains(t, new(Float).UnmarshalJSON([]byte(`"nan`)), "wavehouse: Float")
+}
+
+func TestFloatMarshal(t *testing.T) {
+	for want, f := range map[string]float64{
+		`"nan"`: math.NaN(), `"inf"`: math.Inf(1), `"-inf"`: math.Inf(-1), `1.5`: 1.5, `0`: 0, `1e+21`: 1e21,
+	} {
+		got, err := json.Marshal(Float(f))
+		require.NoError(t, err)
+		assert.Equal(t, want, string(got))
+		back := Float(0)
+		require.NoError(t, json.Unmarshal(got, &back))
+		if !math.IsNaN(f) {
+			assert.Equal(t, Float(f), back, "round trip of %s", want)
+		}
+	}
+}

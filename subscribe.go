@@ -111,10 +111,15 @@ type Event struct {
 	// caller's role may read. Events share the slice; don't modify it.
 	Columns []string
 	// Values holds one value per column, decoded with UseNumber: numbers are
-	// [encoding/json.Number], so 64-bit integers stay exact; a column the
-	// row did not carry is nil. Values are as the producer sent them, not as
-	// the column stores them, except that DateTime values arrive as RFC 3339
-	// UTC.
+	// [encoding/json.Number], so 64-bit integers stay exact. From
+	// Wave-RF/WaveHouse#882 on, the values are the row as ClickHouse stores
+	// and renders it, with the shapes [Row] lists: a column the record
+	// omitted holds its DEFAULT (nil only on a Nullable column with none), a
+	// DateTime keeps its column's scale ("…:00.000Z"), and a Float NaN or
+	// infinity is "nan", "inf" or "-inf". A 0.2.x server sends them as the
+	// producer sent them, nil for a column the record omitted, with DateTime
+	// values as RFC 3339 UTC. Either way, compare times with [Row.Time], not
+	// as strings.
 	Values []any
 }
 
@@ -130,6 +135,8 @@ func (e Event) Row() Row {
 // Decode stores the row in dst, a pointer to a struct or map, as
 // encoding/json would decode a JSON object of the row: struct fields match
 // columns by their json tags, and integer fields, uint64 included, are exact.
+// The field types [Query.Scan] lists read the stream's values too, [Float]
+// for a column that can hold a NaN or an infinity among them.
 func (e Event) Decode(dst any) error {
 	raw, err := json.Marshal(e.Row())
 	if err != nil {

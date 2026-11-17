@@ -129,3 +129,44 @@ func TestIsRetryableFollowsTheCallKind(t *testing.T) {
 		})
 	}
 }
+
+// An ingest body ClickHouse's parser refused carries ClickHouse's own number
+// (Wave-RF/WaveHouse#882), which the error names since the message can be
+// withheld.
+func TestAPIErrorExceptionCode(t *testing.T) {
+	cases := map[string]struct {
+		body string
+		code int
+		msg  string
+		text string
+	}{
+		"refused record": {
+			`{"error":"record 2: Unknown field found while parsing JSONEachRow format: x","code":"clickhouse.rejected","exception_code":117}`,
+			117, "record 2: Unknown field found while parsing JSONEachRow format: x",
+			"wavehouse: POST /v1/ingest: 400 clickhouse.rejected (code 117): record 2: Unknown field found while parsing JSONEachRow format: x",
+		},
+		"message withheld": {
+			`{"error":"record 1: ClickHouse's message is withheld, since it can quote the table's definition","code":"clickhouse.rejected","exception_code":53}`,
+			53, "record 1: ClickHouse's message is withheld, since it can quote the table's definition",
+			"wavehouse: POST /v1/ingest: 400 clickhouse.rejected (code 53): record 1: ClickHouse's message is withheld, since it can quote the table's definition",
+		},
+		"not an integer": {
+			`{"error":"x","code":"clickhouse.rejected","exception_code":"117"}`,
+			0, "x", "wavehouse: POST /v1/ingest: 400 clickhouse.rejected: x",
+		},
+		"none, as from a 0.2.x server": {
+			`{"error":"unknown column \"x\" for table \"t\""}`,
+			0, `unknown column "x" for table "t"`, `wavehouse: POST /v1/ingest: 400: unknown column "x" for table "t"`,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := newRecorder(t, reply(400, tc.body)).client(t).From("t").Insert(t.Context(), map[string]int{"x": 1})
+			ae, ok := errors.AsType[*APIError](err)
+			require.True(t, ok, "err = %v", err)
+			assert.Equal(t, tc.code, ae.ExceptionCode)
+			assert.Equal(t, tc.msg, ae.Message)
+			assert.EqualError(t, err, tc.text)
+		})
+	}
+}
