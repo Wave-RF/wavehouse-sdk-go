@@ -21,8 +21,9 @@ import (
 )
 
 const (
-	// Pinned to the server's own test harness; 26.8 changed numeric DateTime64 parsing.
-	clickhouseImage = "clickhouse/clickhouse-server:26.6.3.62"
+	// The server's own test pin. A server that validates ingest with ClickHouse's parser
+	// (Wave-RF/WaveHouse#882) needs a line chtypes publishes, which 26.6 is not.
+	clickhouseImage = "clickhouse/clickhouse-server:26.8.34.13"
 	// The rolling tag of the server's main branch: the SDK follows the server's current protocol.
 	defaultServerImage = "ghcr.io/wave-rf/wavehouse:dev"
 	// Matches auth.jwt_secret in testdata/settings/config.json.
@@ -35,6 +36,10 @@ var stack struct {
 	adminToken string
 	// managed is true when testcontainers started the server from testdata/settings.
 	managed bool
+	// clickhouseRows is true for a server that validates ingest with ClickHouse's own
+	// parser and sends rows as ClickHouse renders them (Wave-RF/WaveHouse#882), false for
+	// a 0.2.x one. Set by probeServer; tests that see the difference assert each side.
+	clickhouseRows bool
 }
 
 func TestMain(m *testing.M) {
@@ -67,6 +72,11 @@ func run(m *testing.M) int {
 		fmt.Fprintf(os.Stderr, "e2e: create fixtures: %v\n", err)
 		return 1
 	}
+	if err := probeServer(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "e2e: probe server: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "e2e: server renders rows with ClickHouse: %v\n", stack.clickhouseRows)
 	return m.Run()
 }
 
@@ -195,7 +205,7 @@ var fixtureDDL = []string{
 		value    Float64,
 		ts       DateTime64(3) DEFAULT now64(3)
 	) ENGINE = MergeTree ORDER BY (name, ts)`,
-	// 64-bit integers past 2^53 and a Decimal, which the server renders as a JSON string.
+	// 64-bit integers past 2^53 and a Decimal: a JSON string from a 0.2.x server, a number from Wave-RF/WaveHouse#882 on.
 	`CREATE TABLE IF NOT EXISTS e2e_numbers (
 		event_id String,
 		big      UInt64,
@@ -257,6 +267,41 @@ func adminCall(ctx context.Context, method, path string, body any) error {
 	if res.StatusCode/100 != 2 {
 		msg, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
 		return fmt.Errorf("%s %s: %d %s", method, path, res.StatusCode, bytes.TrimSpace(msg))
+	}
+	return nil
+}
+
+// probeServer sets stack.clickhouseRows from how the server answers one record naming a
+// column e2e_events lacks: refused whole with ClickHouse's code 117 by a server that parses
+// ingest with ClickHouse (Wave-RF/WaveHouse#882), rejected on its own in a 200 by a 0.2.x
+// one. Neither publishes anything. Any other answer fails the run.
+func probeServer(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, stack.url+"/v1/ingest?table=e2e_events",
+		bytes.NewReader([]byte(`{"event_id":"e2e-probe","no_such_column":1}`)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+stack.adminToken)
+	req.Header.Set("Content-Type", "application/x-ndjson")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = res.Body.Close() }()
+	raw, _ := io.ReadAll(io.LimitReader(res.Body, 1<<16))
+	var body struct {
+		Code          string `json:"code"`
+		ExceptionCode int    `json:"exception_code"`
+		Failed        int    `json:"failed"`
+	}
+	_ = json.Unmarshal(raw, &body)
+	switch {
+	case res.StatusCode == http.StatusBadRequest && body.Code == "clickhouse.rejected" && body.ExceptionCode == 117:
+		stack.clickhouseRows = true
+	case res.StatusCode == http.StatusOK && body.Failed == 1:
+		stack.clickhouseRows = false
+	default:
+		return fmt.Errorf("a record with an unknown column: %d %s", res.StatusCode, bytes.TrimSpace(raw))
 	}
 	return nil
 }

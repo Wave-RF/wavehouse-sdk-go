@@ -40,6 +40,14 @@ type RecordResult struct {
 // InsertError is returned, together with the [*InsertResult], when the server
 // accepted the request but rejected some records. Inspect it with errors.As.
 // Records that were not rejected are published regardless.
+//
+// A record is rejected on its own for what the server decides once the body
+// has parsed: a failed insert check of the caller's role, a missing dedupe id,
+// or a record its validation engine could not judge (a decline). A record
+// ClickHouse's parser refuses (a value its column can't read, a column the
+// table lacks or the role may not write) is one of these on a 0.2.x server.
+// From Wave-RF/WaveHouse#882 on, it refuses the whole call instead, as an
+// [*APIError]; see [Query.Insert].
 type InsertError struct {
 	// Count is how many records were rejected. It can exceed len(Failed) when
 	// the server truncated its per-record list.
@@ -72,9 +80,10 @@ func (c *Client) From(table string) *Query {
 // Insert sends rows to POST /v1/ingest?table= and returns the server's
 // per-record summary. rows is one struct or map, or a slice or array of them;
 // each is encoded with encoding/json (so use `json` tags, and time.Time is
-// RFC 3339). Every call is sent as NDJSON, one line per row, so a single row
-// gets the same summary as a batch. An empty slice sends nothing and returns a
-// zero result.
+// RFC 3339; encoding/json refuses a float64 NaN or infinity, which a [Float]
+// field writes as the string the server reads). Every call is sent as NDJSON,
+// one line per row, so a single row gets the same summary as a batch. An
+// empty slice sends nothing and returns a zero result.
 //
 // The server answers 200 even when records are rejected: those come back as
 // an [*InsertError] together with the result, so check both. A body over
@@ -82,6 +91,17 @@ func (c *Client) From(table string) *Query {
 // Insert is for a bare [Client.From]: a query that carries any read state
 // (Select, Where, OrderBy, GroupBy, Limit, a time range or an aggregate) is an
 // error, returned before anything is sent.
+//
+// From Wave-RF/WaveHouse#882 on, the server validates the body with
+// ClickHouse's own parser, as an INSERT does, so the first record it can't
+// read refuses the whole call and nothing is published, the other records
+// included. That is an [*APIError] with StatusCode 400, Code
+// "clickhouse.rejected", ClickHouse's number in ExceptionCode (117 for a
+// column the table lacks or the caller's role may not write) and a Message
+// naming the record ("record 2: …"), with no result. A 422 (the validation
+// engine could not judge the body) and a 500 with Retryable false (the role's
+// insert permissions can't be enforced on the table) also fail the whole
+// call. None of the three is retried.
 //
 // Ingest is at-least-once: a failed attempt is retried, and where the server
 // has dedupe configured an id field makes the retry exactly-once, reported in

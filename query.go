@@ -355,10 +355,21 @@ func (q *Query) request() (*request, error) {
 
 // Scan runs the query and decodes the rows into dst, a non-nil pointer to a
 // slice of structs (matched by `json` tag, else case-insensitively by field
-// name) or of maps. The server renders UInt64 and Int64 as JSON numbers, so
-// an int64 or uint64 field is exact, and a Decimal as a JSON string, so give
-// it a string field (or the `json:",string"` tag for a numeric one). Into a
-// map or any, numbers are [encoding/json.Number].
+// name) or of maps. Into a map or any, numbers are [encoding/json.Number].
+// Field types that read every server's answer:
+//
+//   - UInt64 and Int64 are JSON numbers, so a uint64 or int64 field is exact.
+//   - A Decimal is a JSON number from Wave-RF/WaveHouse#882 on and a JSON
+//     string on a 0.2.x server. A [encoding/json.Number] field reads both and
+//     keeps every digit; a string field, or the `json:",string"` tag, reads
+//     only the string.
+//   - A Float32 or Float64 NaN or infinity is the string "nan", "inf" or
+//     "-inf", which fails a float64 field and with it the whole Scan. Give a
+//     column that can hold one a [Float] field.
+//   - A DateTime or DateTime64 fits a [time.Time] field. A Date or Date32 is
+//     "2026-06-21" from Wave-RF/WaveHouse#882 on, which a time.Time field
+//     refuses (0.2.x sent "2026-06-21T00:00:00Z"): give it a string field, or
+//     read it with [Row.Time], which takes both.
 //
 // Scan is a read: a transport error or a retryable [*APIError] is retried. A
 // result over the server's row cap is silently truncated, so set [Query.Limit].

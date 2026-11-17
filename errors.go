@@ -21,6 +21,12 @@ type APIError struct {
 	// Message is the server's "error" text, or http.StatusText when the body
 	// has none.
 	Message string
+	// ExceptionCode is ClickHouse's own error number when the server passes
+	// one on ("exception_code"), as an ingest body ClickHouse's parser refused
+	// carries from Wave-RF/WaveHouse#882 on: 117 for a column the table lacks
+	// or the role may not write, 27 for input it cannot parse. 0 when the body
+	// carries none.
+	ExceptionCode int
 	// Retryable is the server's "retryable" verdict when the body carries
 	// one; otherwise true for 408, 429 and every 5xx. It says nothing about
 	// the call: a raw SQL call or a pipe may have run before the failure, so
@@ -41,13 +47,18 @@ type APIError struct {
 	Method, Path string
 }
 
-// Error renders "wavehouse: POST /v1/query: 400 clickhouse.rejected:
-// <message> (request <id>)", leaving out a code or request id it lacks.
+// Error renders "wavehouse: POST /v1/ingest: 400 clickhouse.rejected (code
+// 117): <message> (request <id>)", leaving out a code, exception code or
+// request id it lacks.
 func (e *APIError) Error() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "wavehouse: %s %s: %d", e.Method, e.Path, e.StatusCode)
 	if e.Code != "" {
 		b.WriteString(" " + e.Code)
+	}
+	if e.ExceptionCode != 0 {
+		// The server can withhold the message when it would quote the table's definition, leaving only the code.
+		fmt.Fprintf(&b, " (code %d)", e.ExceptionCode)
 	}
 	b.WriteString(": " + e.Message)
 	if e.RequestID != "" {

@@ -355,15 +355,18 @@ func newAPIError(r *request, res *http.Response, body []byte) *APIError {
 			res.StatusCode == http.StatusTooManyRequests || res.StatusCode >= 500,
 	}
 	var env struct {
-		Error     string `json:"error"`
-		Code      string `json:"code"`
-		Retryable *bool  `json:"retryable"`
+		Error         string          `json:"error"`
+		Code          string          `json:"code"`
+		Retryable     *bool           `json:"retryable"`
+		ExceptionCode json.RawMessage `json:"exception_code"`
 	}
 	if json.Unmarshal(body, &env) == nil {
 		e.Message, e.Code = env.Error, env.Code
 		if env.Retryable != nil {
 			e.Retryable, e.fromServer = *env.Retryable, true
 		}
+		// Read on its own, so a code that is not an integer is dropped rather than the whole envelope.
+		_ = json.Unmarshal(env.ExceptionCode, &e.ExceptionCode)
 	}
 	if e.Message == "" {
 		e.Message = http.StatusText(res.StatusCode)

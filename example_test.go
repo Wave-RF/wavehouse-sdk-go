@@ -2,9 +2,11 @@ package wavehouse_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"time"
@@ -351,12 +353,16 @@ func ExampleQuery_Insert() {
 		Score  float64 `json:"score"`
 	}
 	res, err := wh.From("clicks").Insert(context.Background(), []click{{"/home", "signup", 12.5}, {"/about", "contact", 3}})
-	// The server answers 200 even when it rejects records: the result is returned
-	// with an *InsertError saying which.
+	// The server answers 200 even when it rejects records (a failed insert
+	// check, a missing dedupe id): the result is returned with an *InsertError
+	// saying which. A record ClickHouse's parser can't read refuses the whole
+	// call instead, with ClickHouse's own error number, and nothing is published.
 	if ie, ok := errors.AsType[*wavehouse.InsertError](err); ok {
 		for _, f := range ie.Failed {
 			fmt.Printf("record %d rejected: %s\n", f.Index, f.Error)
 		}
+	} else if ae, ok := errors.AsType[*wavehouse.APIError](err); ok && ae.ExceptionCode == 117 {
+		log.Fatalf("a column the table lacks, or the role may not write: %s", ae.Message)
 	} else if err != nil {
 		log.Fatal(err)
 	}
@@ -385,6 +391,31 @@ func ExampleQuery_Scan() {
 	}
 	for _, r := range top {
 		fmt.Println(r.Page, r.Views)
+	}
+}
+
+// A Float field reads a sensor reading that can be NaN or infinite, which the
+// server sends as "nan", "inf" or "-inf". A Decimal goes into a json.Number,
+// which reads the number newer servers send and the string 0.2.x sent.
+func ExampleFloat() {
+	wh, err := wavehouse.New("http://localhost:8080", wavehouse.WithToken(os.Getenv("WAVEHOUSE_TOKEN")))
+	if err != nil {
+		log.Fatal(err)
+	}
+	var readings []struct {
+		Sensor string          `json:"sensor"`
+		Value  wavehouse.Float `json:"value"` // a Float64 column
+		Price  json.Number     `json:"price"` // a Decimal(18, 4) column, every digit kept
+	}
+	if err := wh.From("readings").Select("sensor", "value", "price").Limit(10).Scan(context.Background(), &readings); err != nil {
+		log.Fatal(err)
+	}
+	for _, r := range readings {
+		if math.IsNaN(float64(r.Value)) {
+			fmt.Println(r.Sensor, "no reading")
+			continue
+		}
+		fmt.Println(r.Sensor, float64(r.Value), r.Price)
 	}
 }
 

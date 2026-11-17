@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+Ready for the server behaviour of [Wave-RF/WaveHouse#882](https://github.com/Wave-RF/WaveHouse/pull/882), which validates ingest with ClickHouse's own parser and sends rows as ClickHouse renders them. Everything here also works against a 0.2.x server.
+
+### Added
+
+- `APIError.ExceptionCode` is ClickHouse's own error number when the server passes one on, as it does for an ingest body ClickHouse's parser refused (`117` for a column the table lacks or the role may not write). `APIError.Error` names it, since the server withholds the message when it would quote the table's definition.
+- `Float`, a `float64` for struct fields, reads the strings `"nan"`, `"inf"` and `"-inf"` that the server sends for a NaN or an infinity (a `float64` field fails the whole `Scan` or `Event.Decode` on one), and writes them back on `Insert`, where `encoding/json` refuses to encode a `float64` NaN or infinity.
+
+### Changed
+
+- The docs say which struct field types read every server's rows, and the live tests now hold to them. A Decimal goes into a `json.Number`, which reads the number newer servers send as well as the string a 0.2.x server sends; the advice to use a `string` field or the `json:",string"` tag fit only 0.2.x. A Date or Date32 is `"2026-06-21"`, which a `time.Time` field refuses, so it goes into a `string` or is read with `Row.Time`. Times are compared as `time.Time`, never as strings, since a DateTime64 keeps its scale (`…:00.000Z`).
+- `Query.Insert`, `InsertError` and `Event.Values` describe both servers. A record ClickHouse's parser refuses now refuses the whole call as a `400` `*APIError` (`clickhouse.rejected`, with the record named in the message), and nothing is published. Per-record rejections remain for a failed insert check, a missing dedupe id and a decline. A stream row holds an omitted column's evaluated `DEFAULT`, not `null`. No retry rule changed: a `400`, a `422` and a `500` with `retryable: false` are not resent, and a `503` waits out its `Retry-After`. Tests now pin each of these server answers.
+- The live tests run ClickHouse 26.8.34.13, the server's own test pin, where they ran 26.6.3.62: chtypes publishes no 26.6 build, so a server that validates ingest with chtypes can't validate ingest on 26.6. The tests probe which kind of server they face and assert that server's answer.
+
 ## [0.1.0] - 2026-11-17
 
 The first release. The SDK was imported from the `go-sdk` branch of WaveHouse ([Wave-RF/WaveHouse#434](https://github.com/Wave-RF/WaveHouse/pull/434)) and rewritten for the current server protocol; nothing of the pre-release API (`NewClient(Config)`, the namespace fields, the policy client, live queries) remains. Go 1.26 or newer; the runtime uses only the standard library.

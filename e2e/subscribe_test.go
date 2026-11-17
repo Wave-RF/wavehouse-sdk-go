@@ -116,13 +116,25 @@ func TestSubscribeLive(t *testing.T) {
 		assert.Equal(t, cols, ev.Columns)
 		assert.Equal(t, want["event_id"], ev.Values[0])
 		assert.Equal(t, name, ev.Values[1])
-		assert.Nil(t, ev.Values[3], "the record omitted ts, so its slot is null")
+		if stack.clickhouseRows {
+			// The row is the stored one: the omitted ts holds its DEFAULT, now64(3).
+			ts, err := ev.Row().Time("ts")
+			require.NoError(t, err, "ts %#v", ev.Values[3])
+			assert.WithinDuration(t, sent, ts, 10*time.Second)
+		} else {
+			assert.Nil(t, ev.Values[3], "the record omitted ts, so its slot is null")
+		}
 		assert.Equal(t, ev.ID, ev.ReceivedAt.Format(time.RFC3339Nano))
 		assert.WithinDuration(t, sent, ev.ReceivedAt, 10*time.Second)
 	}
 	assert.Equal(t, json.Number("1.5"), got[0].Values[2])
-	// The stream forwards the number as the producer wrote it, not as the Float64 column stores it.
-	assert.Equal(t, json.Number("9007199254740993"), got[1].Values[2])
+	if stack.clickhouseRows {
+		// The value as the Float64 column stores it: 2^53+1 rounds to 2^53.
+		assert.Equal(t, json.Number("9007199254740992"), got[1].Values[2])
+	} else {
+		// The number as the producer wrote it, not as the Float64 column stores it.
+		assert.Equal(t, json.Number("9007199254740993"), got[1].Values[2])
+	}
 	assert.Equal(t, got[0].ID, got[1].ID, "rows of one ingest request share a received_timestamp")
 
 	var row struct {
@@ -134,7 +146,12 @@ func TestSubscribeLive(t *testing.T) {
 	require.NoError(t, got[0].Decode(&row))
 	assert.Equal(t, a["event_id"], row.EventID)
 	assert.InDelta(t, 1.5, row.Value, 0)
-	assert.Nil(t, row.TS)
+	if stack.clickhouseRows {
+		require.NotNil(t, row.TS)
+		assert.Equal(t, got[0].Values[3], *row.TS)
+	} else {
+		assert.Nil(t, row.TS)
+	}
 }
 
 func TestSubscribeSince(t *testing.T) {

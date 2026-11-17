@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"math/big"
 	"net/http"
 	"strings"
@@ -289,4 +290,105 @@ func TestInsertUsesPointerReceiverMarshalers(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The whole-request answers of a server that validates ingest with
+// ClickHouse's parser (Wave-RF/WaveHouse#882): a refusal, a decline and an
+// unenforceable role are final, while the validation layer's outages are
+// retried after their Retry-After.
+func TestInsertWholeRequestAnswers(t *testing.T) {
+	cases := map[string]struct {
+		status   int
+		body     string
+		header   []string
+		retried  time.Duration // 0: not retried
+		sentinel error
+		code     string
+		excode   int
+	}{
+		"refused record": {
+			status: 400, body: `{"error":"record 2: Cannot parse input: expected '{' before: 'x'","code":"clickhouse.rejected","exception_code":27}`,
+			sentinel: ErrBadRequest, code: "clickhouse.rejected", excode: 27,
+		},
+		"column the role may not write": {
+			status: 400, body: `{"error":"record 1: Unknown field found while parsing JSONEachRow format: secret","code":"clickhouse.rejected","exception_code":117}`,
+			sentinel: ErrBadRequest, code: "clickhouse.rejected", excode: 117,
+		},
+		"declined": {status: 422, body: `{"error":"validation engine declined: generateSnowflakeID() is not supported"}`},
+		"insert permissions cannot be enforced": {
+			status: 500, body: `{"error":"this role's insert permissions cannot be enforced on this table","retryable":false}`,
+		},
+		"validation unavailable": {
+			status: 503, body: `{"error":"ingest validation is unavailable"}`, header: []string{"Retry-After", "5"},
+			retried: 5 * time.Second, sentinel: ErrUnavailable,
+		},
+		"validation busy": {
+			status: 503, body: `{"error":"ingest validation is busy"}`, header: []string{"Retry-After", "1"},
+			retried: time.Second, sentinel: ErrUnavailable,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				var at []time.Time
+				c := fakeClient(t, func(r *http.Request) (*http.Response, error) {
+					at = append(at, time.Now())
+					return fakeResponse(r, tc.status, tc.body, tc.header...), nil
+				}, WithRetry(RetryPolicy{MaxAttempts: 2}))
+				res, err := c.From("t").Insert(t.Context(), []map[string]int{{"a": 1}, {"a": 2}})
+				assert.Nil(t, res, "nothing was published, so there is no result")
+				ae, ok := errors.AsType[*APIError](err)
+				require.True(t, ok, "err = %v", err)
+				_, isInsert := errors.AsType[*InsertError](err)
+				assert.False(t, isInsert, "a whole-request answer is not a per-record rejection")
+				assert.Equal(t, tc.status, ae.StatusCode)
+				assert.Equal(t, tc.code, ae.Code)
+				assert.Equal(t, tc.excode, ae.ExceptionCode)
+				if tc.sentinel != nil {
+					assert.ErrorIs(t, err, tc.sentinel)
+				}
+				if tc.retried == 0 {
+					assert.Len(t, at, 1, "not retried")
+					assert.False(t, IsRetryable(err))
+					return
+				}
+				require.Len(t, at, 2)
+				assert.Equal(t, tc.retried, at[1].Sub(at[0]), "waited out Retry-After")
+				assert.True(t, IsRetryable(err))
+			})
+		})
+	}
+}
+
+// Once the body parses, the server still answers per record for what it
+// decides itself: a failed insert check, a missing dedupe id, a decline.
+func TestInsertPerRecordAfterTheBodyParses(t *testing.T) {
+	rec := newRecorder(t, reply(200, `{"total":3,"succeeded":1,"failed":2,"duplicates":0,"results":[
+		{"index":1,"ok":true},
+		{"index":2,"error":"check failed for column \"org_id\""},
+		{"index":3,"error":"validation engine declined: the insert check for column \"org_id\" could not be evaluated"}]}`))
+	res, err := rec.client(t).From("t").Insert(t.Context(), []map[string]int{{}, {}, {}})
+	require.NotNil(t, res)
+	assert.Equal(t, 1, res.Succeeded)
+	ie, ok := errors.AsType[*InsertError](err)
+	require.True(t, ok, "err = %v", err)
+	assert.Equal(t, []RecordResult{
+		{Index: 2, Error: `check failed for column "org_id"`},
+		{Index: 3, Error: `validation engine declined: the insert check for column "org_id" could not be evaluated`},
+	}, ie.Failed)
+}
+
+func TestInsertWritesFloatNonFinite(t *testing.T) {
+	rec := newRecorder(t, reply(200, `{"total":1,"succeeded":1}`))
+	type reading struct {
+		V Float  `json:"v"`
+		W *Float `json:"w"`
+	}
+	inf := Float(math.Inf(-1))
+	_, err := rec.client(t).From("t").Insert(t.Context(), reading{V: Float(math.NaN()), W: &inf})
+	require.NoError(t, err)
+	assert.Equal(t, `{"v":"nan","w":"-inf"}`, rec.last(t).body)
+
+	_, err = rec.client(t).From("t").Insert(t.Context(), map[string]float64{"v": math.NaN()})
+	require.ErrorContains(t, err, "unsupported value: NaN", "a plain float64 can't carry one")
 }

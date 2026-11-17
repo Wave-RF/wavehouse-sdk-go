@@ -14,10 +14,16 @@ import (
 //   - A number is an [encoding/json.Number], never a float64, so a UInt64 or
 //     Int64 past 2^53 stays exact. Read it with [Row.Int64], [Row.Uint64] or
 //     [Row.Float64], or type-assert it and call its methods.
-//   - A Decimal, and a 64-bit integer the server chose to quote, is a string;
-//     the numeric accessors parse it.
-//   - A Date, DateTime or DateTime64 is a string. [Row.Time] parses it;
-//     RFC 3339 (with fractional seconds) is what the server sends.
+//   - A Decimal is a number from Wave-RF/WaveHouse#882 on and a string on a
+//     0.2.x server, as is a 64-bit integer a server chose to quote. The
+//     numeric accessors parse either, and [Row.String] returns its digits.
+//   - A Float32 or Float64 NaN or infinity is the string "nan", "inf" or
+//     "-inf"; [Row.Float64] reads it.
+//   - A DateTime or DateTime64 is a string, RFC 3339 in UTC; a Date or Date32
+//     is "2026-06-21". [Row.Time] parses both. Compare times as [time.Time],
+//     not as strings: the server keeps the column's scale, so
+//     "…T04:00:00.000Z" is a DateTime64(3) on a whole second, and as strings
+//     "…:00Z" sorts after "…:00.123Z".
 //   - NULL is a nil value; the accessors report it as an error that names the
 //     column, so a missing value is never read as zero.
 //
@@ -132,8 +138,9 @@ func (r Row) Uint64(col string) (uint64, error) {
 }
 
 // Float64 returns a floating-point column. A string is parsed, which is how a
-// Decimal is read; converting a Decimal to float64 can lose digits, so keep
-// it as a string ([Row.String]) when it must stay exact.
+// 0.2.x server's Decimal is read, and how "nan", "inf" and "-inf" become a NaN
+// or an infinity. Converting a Decimal to float64 can lose digits, so keep its
+// text ([Row.String]) when it must stay exact.
 func (r Row) Float64(col string) (float64, error) {
 	v, err := r.get(col)
 	if err != nil {
@@ -196,4 +203,49 @@ func (r Row) Time(col string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, badShape(col, v, "a time")
+}
+
+// Float is a float64 for a Float32 or Float64 column that can hold a NaN or an
+// infinity. The server sends those as the strings "nan", "inf" and "-inf",
+// which encoding/json won't put in a float64, so a float64 field fails the
+// whole Scan or [Event.Decode]; a Float field reads them, and any JSON number.
+// It writes them back as the same strings, where encoding/json refuses to
+// encode a float64 NaN or infinity, and every other value as a float64 does.
+// JSON null leaves it unchanged, as it does a float64; use *Float to tell a
+// NULL apart.
+type Float float64
+
+// UnmarshalJSON reads a JSON number, or a string holding "nan", "inf",
+// "-inf" or a number.
+func (f *Float) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		return nil
+	}
+	s := string(b)
+	if len(b) > 0 && b[0] == '"' {
+		if err := json.Unmarshal(b, &s); err != nil {
+			return fmt.Errorf("wavehouse: Float: %w", err)
+		}
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return fmt.Errorf("wavehouse: Float: can't read %s as a float", b)
+	}
+	*f = Float(v)
+	return nil
+}
+
+// MarshalJSON writes a NaN as "nan" and an infinity as "inf" or "-inf", and
+// any other value as encoding/json writes a float64.
+func (f Float) MarshalJSON() ([]byte, error) {
+	switch v := float64(f); {
+	case math.IsNaN(v):
+		return []byte(`"nan"`), nil
+	case math.IsInf(v, 1):
+		return []byte(`"inf"`), nil
+	case math.IsInf(v, -1):
+		return []byte(`"-inf"`), nil
+	default:
+		return json.Marshal(v)
+	}
 }
