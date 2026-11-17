@@ -33,6 +33,8 @@ const (
 var stack struct {
 	url        string
 	adminToken string
+	// managed is true when testcontainers started the server from testdata/settings.
+	managed bool
 }
 
 func TestMain(m *testing.M) {
@@ -58,6 +60,7 @@ func run(m *testing.M) int {
 			return 1
 		}
 		stack.adminToken = mintToken("admin", 24*time.Hour)
+		stack.managed = true
 	}
 
 	if err := createFixtures(ctx); err != nil {
@@ -192,6 +195,13 @@ var fixtureDDL = []string{
 		value    Float64,
 		ts       DateTime64(3) DEFAULT now64(3)
 	) ENGINE = MergeTree ORDER BY (name, ts)`,
+	// 64-bit integers past 2^53 and a Decimal, which the server renders as a JSON string.
+	`CREATE TABLE IF NOT EXISTS e2e_numbers (
+		event_id String,
+		big      UInt64,
+		signed   Int64,
+		price    Decimal(38, 10)
+	) ENGINE = MergeTree ORDER BY event_id`,
 }
 
 // createFixtures goes through the server's admin endpoints directly rather than the SDK,
@@ -210,10 +220,13 @@ func createFixtures(ctx context.Context) error {
 	for {
 		err := adminCall(ctx, http.MethodGet, "/v1/ops/schema?table=e2e_events", nil)
 		if err == nil {
+			err = adminCall(ctx, http.MethodGet, "/v1/ops/schema?table=e2e_numbers", nil)
+		}
+		if err == nil {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("e2e_events never appeared in the schema: %w", err)
+			return fmt.Errorf("the fixture tables never appeared in the schema: %w", err)
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
